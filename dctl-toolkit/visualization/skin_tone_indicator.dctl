@@ -1,0 +1,117 @@
+// skin_tone_indicator.dctl
+// ---------------------------------------------------------------------------
+// Purpose:   Highlight pixels falling within the skin tone hue range
+// Input:     Any color space (best results with Rec.709 or log input)
+// Output:    Original image with skin tone regions highlighted
+// Reference: Vectorscope I-line at ~123 degrees (skin tone line)
+// Verified:  DaVinci Resolve 18.6
+// ---------------------------------------------------------------------------
+//
+// Converts RGB to HSV, identifies pixels near the skin tone hue
+// (approximately 20-40 degrees in HSV, corresponding to ~123 degrees
+// on the vectorscope I-line). Pixels within tolerance are shown normally
+// or tinted; everything else is desaturated.
+
+DEFINE_UI_PARAMS(hue_center, Skin Hue Center (deg), DCTLUI_SLIDER_FLOAT, 28.0, 0.0, 60.0, 1.0)
+DEFINE_UI_PARAMS(hue_tolerance, Hue Tolerance (deg), DCTLUI_SLIDER_FLOAT, 15.0, 2.0, 40.0, 1.0)
+DEFINE_UI_PARAMS(min_saturation, Min Saturation, DCTLUI_SLIDER_FLOAT, 0.1, 0.0, 0.5, 0.01)
+DEFINE_UI_PARAMS(max_saturation, Max Saturation, DCTLUI_SLIDER_FLOAT, 0.7, 0.3, 1.0, 0.01)
+DEFINE_UI_PARAMS(min_value, Min Brightness, DCTLUI_SLIDER_FLOAT, 0.15, 0.0, 0.5, 0.01)
+DEFINE_UI_PARAMS(overlay_mode, Overlay Mode, DCTLUI_COMBO_BOX, 0, {MODE_DESAT, MODE_TINT}, {Desaturate Non-Skin, Tint Skin Regions})
+DEFINE_UI_PARAMS(desat_amount, Desaturation, DCTLUI_SLIDER_FLOAT, 0.9, 0.0, 1.0, 0.05)
+
+// Rec.709 luma weights
+const float LW_R = 0.2126f;
+const float LW_G = 0.7152f;
+const float LW_B = 0.0722f;
+
+__DEVICE__ float3 rgb_to_hsv(float r, float g, float b)
+{
+    float cmax = _fmaxf(r, _fmaxf(g, b));
+    float cmin = _fminf(r, _fminf(g, b));
+    float delta = cmax - cmin;
+
+    float h = 0.0f;
+    float s = 0.0f;
+    float v = cmax;
+
+    if (delta > 0.0001f)
+    {
+        s = delta / cmax;
+
+        if (cmax == r)
+        {
+            h = 60.0f * ((g - b) / delta);
+            if (h < 0.0f) h += 360.0f;
+        }
+        else if (cmax == g)
+        {
+            h = 60.0f * ((b - r) / delta + 2.0f);
+        }
+        else
+        {
+            h = 60.0f * ((r - g) / delta + 4.0f);
+        }
+    }
+
+    return make_float3(h, s, v);
+}
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                             float p_R, float p_G, float p_B)
+{
+    float3 hsv = rgb_to_hsv(p_R, p_G, p_B);
+    float hue = hsv.x;
+    float sat = hsv.y;
+    float val = hsv.z;
+
+    // Check if pixel is within skin tone range
+    float hue_diff = _fabs(hue - hue_center);
+    // Handle hue wrapping around 360
+    if (hue_diff > 180.0f) hue_diff = 360.0f - hue_diff;
+
+    bool is_skin = (hue_diff <= hue_tolerance) &&
+                   (sat >= min_saturation) &&
+                   (sat <= max_saturation) &&
+                   (val >= min_value);
+
+    float luma = LW_R * p_R + LW_G * p_G + LW_B * p_B;
+
+    if (overlay_mode == MODE_DESAT)
+    {
+        // Desaturate everything that is NOT skin
+        if (!is_skin)
+        {
+            float3 out;
+            out.x = p_R + (luma - p_R) * desat_amount;
+            out.y = p_G + (luma - p_G) * desat_amount;
+            out.z = p_B + (luma - p_B) * desat_amount;
+            return out;
+        }
+        return make_float3(p_R, p_G, p_B);
+    }
+    else
+    {
+        // Tint skin regions with a subtle pink/warm overlay
+        if (is_skin)
+        {
+            // Soft edge: blend based on how close to center hue
+            float blend = 1.0f - (hue_diff / hue_tolerance);
+            blend *= 0.4f; // Keep it subtle
+            float3 out;
+            out.x = p_R + blend * 0.3f;
+            out.y = p_G - blend * 0.1f;
+            out.z = p_B - blend * 0.1f;
+            out.x = _fminf(out.x, 1.0f);
+            out.y = _fmaxf(out.y, 0.0f);
+            out.z = _fmaxf(out.z, 0.0f);
+            return out;
+        }
+        // Desaturate non-skin slightly
+        float3 out;
+        out.x = p_R + (luma - p_R) * 0.5f;
+        out.y = p_G + (luma - p_G) * 0.5f;
+        out.z = p_B + (luma - p_B) * 0.5f;
+        return out;
+    }
+}

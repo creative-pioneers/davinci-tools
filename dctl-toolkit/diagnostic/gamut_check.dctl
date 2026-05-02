@@ -1,0 +1,68 @@
+// gamut_check.dctl
+// ---------------------------------------------------------------------------
+// Purpose:   Highlight out-of-range pixels (any channel <0 or >1)
+// Input:     Any color space (most useful in wide gamut / scene-linear)
+// Output:    Original image with colored overlay on out-of-range pixels
+// Verified:  DaVinci Resolve 18.6
+// ---------------------------------------------------------------------------
+//
+// When working in wide gamut color spaces (e.g. ACES AP0/AP1, Cinema Gamut),
+// pixels can have channel values outside the 0-1 range after gamut mapping
+// or grading. This tool makes those pixels visible:
+//   - Cyan overlay for negative values (any R, G, or B < 0)
+//   - Red overlay for super-white values (any R, G, or B > upper_limit)
+//   - Magenta overlay for pixels that are both negative AND super-white
+
+DEFINE_UI_PARAMS(upper_limit, Upper Limit, DCTLUI_SLIDER_FLOAT, 1.0, 0.8, 2.0, 0.01)
+DEFINE_UI_PARAMS(lower_limit, Lower Limit, DCTLUI_SLIDER_FLOAT, 0.0, -0.1, 0.05, 0.005)
+DEFINE_UI_PARAMS(overlay_opacity, Overlay Opacity, DCTLUI_SLIDER_FLOAT, 0.8, 0.1, 1.0, 0.05)
+DEFINE_UI_PARAMS(show_original, Show Original Under, DCTLUI_COMBO_BOX, 0, {ORIG_ON, ORIG_OFF}, {Yes, No})
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                             float p_R, float p_G, float p_B)
+{
+    bool has_negative = (p_R < lower_limit) || (p_G < lower_limit) || (p_B < lower_limit);
+    bool has_super    = (p_R > upper_limit) || (p_G > upper_limit) || (p_B > upper_limit);
+
+    if (!has_negative && !has_super)
+    {
+        // In-range pixel: pass through
+        return make_float3(p_R, p_G, p_B);
+    }
+
+    // Determine overlay color
+    float3 overlay;
+    if (has_negative && has_super)
+    {
+        // Both: magenta
+        overlay = make_float3(0.9f, 0.0f, 0.9f);
+    }
+    else if (has_negative)
+    {
+        // Negative: cyan
+        overlay = make_float3(0.0f, 0.8f, 0.9f);
+    }
+    else
+    {
+        // Super-white: red
+        overlay = make_float3(1.0f, 0.0f, 0.0f);
+    }
+
+    if (show_original == ORIG_ON)
+    {
+        // Blend overlay with clamped original
+        float cr = _fmaxf(_fminf(p_R, 1.0f), 0.0f);
+        float cg = _fmaxf(_fminf(p_G, 1.0f), 0.0f);
+        float cb = _fmaxf(_fminf(p_B, 1.0f), 0.0f);
+
+        float3 out;
+        out.x = cr * (1.0f - overlay_opacity) + overlay.x * overlay_opacity;
+        out.y = cg * (1.0f - overlay_opacity) + overlay.y * overlay_opacity;
+        out.z = cb * (1.0f - overlay_opacity) + overlay.z * overlay_opacity;
+        return out;
+    }
+    else
+    {
+        return overlay;
+    }
+}

@@ -1,0 +1,57 @@
+// zebras.dctl
+// ---------------------------------------------------------------------------
+// Purpose:   Diagonal stripe overlay on clipped/crushed pixels
+// Input:     Any color space (operates on signal values 0-1)
+// Output:    Original image with diagonal stripe overlays on problem areas
+// Verified:  DaVinci Resolve 18.6
+// ---------------------------------------------------------------------------
+//
+// High-threshold stripes (default red-tinted) mark overexposed pixels.
+// Low-threshold stripes (default blue-tinted) mark underexposed/crushed pixels.
+// Base image is slightly desaturated so stripes stand out.
+
+DEFINE_UI_PARAMS(high_threshold, High Threshold, DCTLUI_SLIDER_FLOAT, 0.95, 0.5, 1.0, 0.01)
+DEFINE_UI_PARAMS(low_threshold, Low Threshold, DCTLUI_SLIDER_FLOAT, 0.02, 0.0, 0.2, 0.005)
+DEFINE_UI_PARAMS(stripe_frequency, Stripe Width, DCTLUI_SLIDER_INT, 8, 2, 32, 1)
+DEFINE_UI_PARAMS(desat_amount, Base Desaturation, DCTLUI_SLIDER_FLOAT, 0.3, 0.0, 1.0, 0.05)
+
+// Rec.709 luma weights
+const float LW_R = 0.2126f;
+const float LW_G = 0.7152f;
+const float LW_B = 0.0722f;
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                             float p_R, float p_G, float p_B)
+{
+    float luma = LW_R * p_R + LW_G * p_G + LW_B * p_B;
+
+    // Desaturate base image for contrast
+    float3 base;
+    base.x = p_R + (luma - p_R) * desat_amount;
+    base.y = p_G + (luma - p_G) * desat_amount;
+    base.z = p_B + (luma - p_B) * desat_amount;
+
+    // Diagonal stripe pattern: on when (x + y) mod (2*freq) < freq
+    int stripe_period = stripe_frequency * 2;
+    int stripe_pos = (p_X + p_Y) % stripe_period;
+    bool on_stripe = (stripe_pos < stripe_frequency);
+
+    // Check if any channel exceeds high threshold
+    bool is_clipped = (p_R > high_threshold) || (p_G > high_threshold) || (p_B > high_threshold);
+
+    // Check if all channels below low threshold
+    bool is_crushed = (p_R < low_threshold) && (p_G < low_threshold) && (p_B < low_threshold);
+
+    if (is_clipped && on_stripe)
+    {
+        // Red stripes for overexposure
+        return make_float3(1.0f, 0.0f, 0.0f);
+    }
+    else if (is_crushed && on_stripe)
+    {
+        // Blue stripes for underexposure
+        return make_float3(0.0f, 0.1f, 0.8f);
+    }
+
+    return base;
+}

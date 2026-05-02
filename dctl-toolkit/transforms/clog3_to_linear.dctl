@@ -1,0 +1,66 @@
+// clog3_to_linear.dctl
+// ---------------------------------------------------------------------------
+// Purpose:   Convert Canon C-Log 3 signal to scene-linear light
+// Input:     Canon C-Log 3 encoded (Canon Cinema Gamut or any gamut)
+// Output:    Scene-linear (same gamut as input)
+// Reference: Canon Log 3 Transfer Characteristics white paper
+//            "Canon Log Transfer Characteristics" v202103
+// Verified:  DaVinci Resolve 18.6
+// ---------------------------------------------------------------------------
+//
+// Canon C-Log 3 is a piecewise function:
+//   For signal values above the linear threshold:
+//     IRE = 0.42889912 * log10(x * 583.196016 + 1.0) + 0.07623209
+//   For signal values at/below the linear threshold:
+//     IRE = -0.42889912 * log10(-x * 583.196016 + 1.0) + 0.07623209
+//   With a linear segment near zero for noise reduction.
+//
+// This DCTL inverts that encoding to recover scene-linear values.
+
+// Canon C-Log 3 constants (from Canon white paper)
+// Forward:  IRE = a * log10(b * x + 1) + c        for x >= cut
+//           IRE = -a * log10(-b * x + 1) + c       for x < -cut
+//           IRE = d * x + e                         in linear segment
+const float CLOG3_A = 0.42889912f;
+const float CLOG3_B = 583.196016f;
+const float CLOG3_C = 0.07623209f;
+const float CLOG3_D = 8.7537079f;
+const float CLOG3_E = 0.09246575f;
+
+// Thresholds for the linear segment (in IRE / code-value domain)
+// The linear segment spans a narrow range around black
+const float CLOG3_LINEAR_CUT_IRE_POS = 0.097465473f;   // d * cut_linear + e
+const float CLOG3_LINEAR_CUT_IRE_NEG = 0.08746603f;    // c - a*log10(b*cut + 1) mirrored
+
+__DEVICE__ float clog3_to_linear_f(float x)
+{
+    // Inverse of Canon C-Log 3
+    // Input x is the C-Log 3 IRE value (0-1 range, where 0.0 = code value 0%)
+    if (x >= CLOG3_LINEAR_CUT_IRE_POS)
+    {
+        // Upper log segment: x = a * log10(b * L + 1) + c
+        // => L = (10^((x - c) / a) - 1) / b
+        return (_powf(10.0f, (x - CLOG3_C) / CLOG3_A) - 1.0f) / CLOG3_B;
+    }
+    else if (x <= CLOG3_LINEAR_CUT_IRE_NEG)
+    {
+        // Lower log segment (negative mirror): x = -a * log10(-b * L + 1) + c
+        // => L = -(10^((c - x) / a) - 1) / b
+        return -((_powf(10.0f, (CLOG3_C - x) / CLOG3_A) - 1.0f) / CLOG3_B);
+    }
+    else
+    {
+        // Linear segment: x = d * L + e  =>  L = (x - e) / d
+        return (x - CLOG3_E) / CLOG3_D;
+    }
+}
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                             float p_R, float p_G, float p_B)
+{
+    float3 out;
+    out.x = clog3_to_linear_f(p_R);
+    out.y = clog3_to_linear_f(p_G);
+    out.z = clog3_to_linear_f(p_B);
+    return out;
+}

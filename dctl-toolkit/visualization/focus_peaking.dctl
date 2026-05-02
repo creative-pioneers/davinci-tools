@@ -1,0 +1,99 @@
+// focus_peaking.dctl
+// ---------------------------------------------------------------------------
+// Purpose:   Highlight in-focus areas by detecting high-frequency edges
+// Input:     Any color space (operates on luma channel)
+// Output:    Original image with colored edge overlay where focus is sharpest
+// Note:      Uses __TEXTURE__ params for multi-pixel neighborhood access
+// Verified:  DaVinci Resolve 18.6
+// ---------------------------------------------------------------------------
+//
+// Uses a 3x3 Laplacian kernel on the luma channel to detect edges.
+// Pixels where the gradient magnitude exceeds the threshold are painted
+// with the user-selected peak color. Base image can optionally be
+// desaturated to make the peaking overlay more visible.
+
+DEFINE_UI_PARAMS(threshold, Edge Threshold, DCTLUI_SLIDER_FLOAT, 0.05, 0.005, 0.3, 0.005)
+DEFINE_UI_PARAMS(peak_r, Peak Color R, DCTLUI_SLIDER_FLOAT, 1.0, 0.0, 1.0, 0.05)
+DEFINE_UI_PARAMS(peak_g, Peak Color G, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 1.0, 0.05)
+DEFINE_UI_PARAMS(peak_b, Peak Color B, DCTLUI_SLIDER_FLOAT, 0.0, 0.0, 1.0, 0.05)
+DEFINE_UI_PARAMS(desat_base, Desaturate Base, DCTLUI_COMBO_BOX, 0, {DESAT_OFF, DESAT_ON}, {Off, On})
+DEFINE_UI_PARAMS(desat_strength, Desaturation Strength, DCTLUI_SLIDER_FLOAT, 0.7, 0.0, 1.0, 0.05)
+
+// Rec.709 luma weights
+const float LW_R = 0.2126f;
+const float LW_G = 0.7152f;
+const float LW_B = 0.0722f;
+
+__DEVICE__ float luma_at(__TEXTURE__ p_TexR, __TEXTURE__ p_TexG, __TEXTURE__ p_TexB,
+                          int x, int y)
+{
+    float r = _tex2D(p_TexR, x, y);
+    float g = _tex2D(p_TexG, x, y);
+    float b = _tex2D(p_TexB, x, y);
+    return LW_R * r + LW_G * g + LW_B * b;
+}
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                              __TEXTURE__ p_TexR, __TEXTURE__ p_TexG, __TEXTURE__ p_TexB,
+                              float p_R, float p_G, float p_B)
+{
+    // Boundary check: skip edge pixels to avoid texture out-of-bounds
+    if (p_X < 1 || p_X >= p_Width - 1 || p_Y < 1 || p_Y >= p_Height - 1)
+    {
+        return make_float3(p_R, p_G, p_B);
+    }
+
+    // Sample 3x3 luma neighborhood
+    float tl = luma_at(p_TexR, p_TexG, p_TexB, p_X - 1, p_Y - 1);
+    float tc = luma_at(p_TexR, p_TexG, p_TexB, p_X,     p_Y - 1);
+    float tr = luma_at(p_TexR, p_TexG, p_TexB, p_X + 1, p_Y - 1);
+    float ml = luma_at(p_TexR, p_TexG, p_TexB, p_X - 1, p_Y);
+    float mc = luma_at(p_TexR, p_TexG, p_TexB, p_X,     p_Y);
+    float mr = luma_at(p_TexR, p_TexG, p_TexB, p_X + 1, p_Y);
+    float bl = luma_at(p_TexR, p_TexG, p_TexB, p_X - 1, p_Y + 1);
+    float bc = luma_at(p_TexR, p_TexG, p_TexB, p_X,     p_Y + 1);
+    float br = luma_at(p_TexR, p_TexG, p_TexB, p_X + 1, p_Y + 1);
+
+    // 3x3 Laplacian kernel:
+    //   0  -1   0
+    //  -1   4  -1
+    //   0  -1   0
+    float laplacian = _fabs(-tc - ml + 4.0f * mc - mr - bc);
+
+    // Optionally include diagonal terms for stronger detection
+    // (full Laplacian: -1 -1 -1 / -1 8 -1 / -1 -1 -1)
+    float laplacian_full = _fabs(-tl - tc - tr - ml + 8.0f * mc - mr - bl - bc - br);
+
+    // Use the stronger full Laplacian
+    float edge = laplacian_full;
+
+    // Prepare base image
+    float luma = LW_R * p_R + LW_G * p_G + LW_B * p_B;
+    float3 base;
+
+    if (desat_base == DESAT_ON)
+    {
+        base.x = p_R + (luma - p_R) * desat_strength;
+        base.y = p_G + (luma - p_G) * desat_strength;
+        base.z = p_B + (luma - p_B) * desat_strength;
+    }
+    else
+    {
+        base.x = p_R;
+        base.y = p_G;
+        base.z = p_B;
+    }
+
+    // Overlay peak color where edge exceeds threshold
+    if (edge > threshold)
+    {
+        // Blend strength proportional to how far above threshold
+        float strength = _fminf((edge - threshold) / threshold, 1.0f);
+        float3 peak_color = make_float3(peak_r, peak_g, peak_b);
+        base.x = base.x * (1.0f - strength) + peak_color.x * strength;
+        base.y = base.y * (1.0f - strength) + peak_color.y * strength;
+        base.z = base.z * (1.0f - strength) + peak_color.z * strength;
+    }
+
+    return base;
+}

@@ -1,0 +1,87 @@
+// chroma_noise_viz.dctl
+// ---------------------------------------------------------------------------
+// Purpose:   Highlight shadow chroma noise (high chroma in low-luma regions)
+// Input:     Any color space
+// Output:    Original image with magenta overlay where chroma noise detected
+// Verified:  DaVinci Resolve 18.6
+// ---------------------------------------------------------------------------
+//
+// Shadow regions in digital camera footage often exhibit chroma noise:
+// pixels with significant color saturation despite being in very dark areas
+// where little color information exists. This diagnostic highlights those
+// pixels by computing chroma distance from neutral and checking it against
+// a luma-dependent threshold.
+
+DEFINE_UI_PARAMS(luma_ceiling, Luma Ceiling, DCTLUI_SLIDER_FLOAT, 0.15, 0.02, 0.4, 0.01)
+DEFINE_UI_PARAMS(chroma_threshold, Chroma Threshold, DCTLUI_SLIDER_FLOAT, 0.03, 0.005, 0.15, 0.005)
+DEFINE_UI_PARAMS(overlay_opacity, Overlay Opacity, DCTLUI_SLIDER_FLOAT, 0.75, 0.1, 1.0, 0.05)
+DEFINE_UI_PARAMS(view_mode, View Mode, DCTLUI_COMBO_BOX, 0, {MODE_OVERLAY, MODE_ISOLATED, MODE_HEATMAP}, {Overlay on Image, Isolated Noise Map, Chroma Heatmap})
+
+// Rec.709 luma weights
+const float LW_R = 0.2126f;
+const float LW_G = 0.7152f;
+const float LW_B = 0.0722f;
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                             float p_R, float p_G, float p_B)
+{
+    float luma = LW_R * p_R + LW_G * p_G + LW_B * p_B;
+
+    // Chroma distance from neutral (distance in RG chroma plane)
+    float cr = p_R - luma;
+    float cg = p_G - luma;
+    float cb = p_B - luma;
+    float chroma_dist = _sqrtf(cr * cr + cg * cg + cb * cb);
+
+    // Adaptive threshold: scale chroma threshold by how far below luma ceiling
+    // Pixels at very low luma get the full threshold; pixels near ceiling get relaxed
+    float luma_factor = 1.0f;
+    if (luma < luma_ceiling)
+    {
+        luma_factor = 1.0f - (luma / luma_ceiling) * 0.5f;
+    }
+
+    bool is_noisy = (luma < luma_ceiling) && (chroma_dist > chroma_threshold * luma_factor);
+
+    if (view_mode == MODE_HEATMAP)
+    {
+        // Show chroma magnitude as a heatmap regardless of luma
+        // Black = no chroma, magenta = high chroma
+        float intensity = _fminf(chroma_dist / (chroma_threshold * 3.0f), 1.0f);
+        if (luma >= luma_ceiling)
+        {
+            // Above luma ceiling: show as dark grey
+            return make_float3(0.1f, 0.1f, 0.1f);
+        }
+        return make_float3(intensity, 0.0f, intensity);
+    }
+
+    if (!is_noisy)
+    {
+        if (view_mode == MODE_ISOLATED)
+        {
+            // Show clean areas as dark grey
+            return make_float3(0.05f, 0.05f, 0.05f);
+        }
+        return make_float3(p_R, p_G, p_B);
+    }
+
+    // Noise detected
+    if (view_mode == MODE_ISOLATED)
+    {
+        // Show noise intensity as magenta brightness
+        float noise_strength = _fminf((chroma_dist - chroma_threshold) / chroma_threshold, 1.0f);
+        return make_float3(noise_strength, 0.0f, noise_strength);
+    }
+
+    // Overlay mode: blend magenta over original
+    float noise_strength = _fminf((chroma_dist - chroma_threshold * luma_factor) /
+                                   (chroma_threshold * luma_factor), 1.0f);
+    float blend = noise_strength * overlay_opacity;
+
+    float3 out;
+    out.x = p_R * (1.0f - blend) + 0.9f * blend;
+    out.y = p_G * (1.0f - blend) + 0.0f * blend;
+    out.z = p_B * (1.0f - blend) + 0.9f * blend;
+    return out;
+}

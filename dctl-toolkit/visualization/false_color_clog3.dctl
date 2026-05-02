@@ -1,0 +1,104 @@
+// false_color_clog3.dctl
+// ---------------------------------------------------------------------------
+// Purpose:   False color exposure map tuned for Canon C-Log 3 log values
+// Input:     Canon C-Log 3 encoded (default) or Rec.709 (toggle via UI)
+// Output:    False color overlay with zone-based coloring
+// Reference: Canon C-Log 3 IRE mapping, standard false color zone scheme
+// Verified:  DaVinci Resolve 18.6
+// ---------------------------------------------------------------------------
+//
+// Zone scheme (C-Log 3 IRE values):
+//   Purple  : < 0.10   - crushed / underexposed blacks
+//   Blue    : 0.10-0.25 - deep shadows
+//   Teal    : 0.25-0.35 - shadow detail
+//   Green   : 0.35-0.43 - middle grey (~18% grey card = ~0.39 in C-Log 3)
+//   Grey    : 0.43-0.50 - upper midtones
+//   Pink    : 0.50-0.58 - skin tones (Caucasian/average reference)
+//   Yellow  : 0.58-0.75 - highlights
+//   Orange  : 0.75-0.95 - hot highlights (approaching clip)
+//   Red     : > 0.95    - clipped
+
+DEFINE_UI_PARAMS(input_mode, Input Mode, DCTLUI_COMBO_BOX, 0, {LOG, REC709}, {C-Log 3, Rec.709})
+
+// Rec.709 luma weights
+const float LW_R = 0.2126f;
+const float LW_G = 0.7152f;
+const float LW_B = 0.0722f;
+
+// C-Log 3 constants for forward transform (linear -> clog3)
+// Used when input is Rec.709 to convert luma to C-Log 3 equivalent
+const float CLOG3_A = 0.42889912f;
+const float CLOG3_B = 583.196016f;
+const float CLOG3_C = 0.07623209f;
+const float CLOG3_D = 8.7537079f;
+const float CLOG3_E = 0.09246575f;
+const float CLOG3_LINEAR_CUT = 0.0005627f;
+
+// Rec.709 EOTF (display gamma to linear)
+const float REC709_ALPHA = 1.09929682680944f;
+const float REC709_BETA_OETF = 0.018053968510807f;
+
+__DEVICE__ float rec709_to_linear_f(float x)
+{
+    if (x < 0.0f) return 0.0f;
+    if (x < 4.5f * REC709_BETA_OETF)
+        return x / 4.5f;
+    else
+        return _powf((x + (REC709_ALPHA - 1.0f)) / REC709_ALPHA, 1.0f / 0.45f);
+}
+
+__DEVICE__ float linear_to_clog3_f(float x)
+{
+    if (x >= CLOG3_LINEAR_CUT)
+        return CLOG3_A * _log10f(CLOG3_B * x + 1.0f) + CLOG3_C;
+    else if (x <= -CLOG3_LINEAR_CUT)
+        return -CLOG3_A * _log10f(-CLOG3_B * x + 1.0f) + CLOG3_C;
+    else
+        return CLOG3_D * x + CLOG3_E;
+}
+
+__DEVICE__ float3 zone_color(float luma)
+{
+    // Zone thresholds and colors for C-Log 3 IRE values
+    if (luma < 0.10f)
+        return make_float3(0.4f, 0.0f, 0.6f);   // Purple - crushed
+    else if (luma < 0.25f)
+        return make_float3(0.0f, 0.1f, 0.8f);   // Blue - shadows
+    else if (luma < 0.35f)
+        return make_float3(0.0f, 0.6f, 0.6f);   // Teal - shadow detail
+    else if (luma < 0.43f)
+        return make_float3(0.0f, 0.7f, 0.0f);   // Green - middle grey
+    else if (luma < 0.50f)
+        return make_float3(0.5f, 0.5f, 0.5f);   // Grey - upper midtones
+    else if (luma < 0.58f)
+        return make_float3(0.9f, 0.5f, 0.6f);   // Pink - skin tones
+    else if (luma < 0.75f)
+        return make_float3(0.9f, 0.9f, 0.0f);   // Yellow - highlights
+    else if (luma < 0.95f)
+        return make_float3(1.0f, 0.5f, 0.0f);   // Orange - hot highlights
+    else
+        return make_float3(1.0f, 0.0f, 0.0f);   // Red - clipped
+}
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                             float p_R, float p_G, float p_B)
+{
+    float luma;
+
+    if (input_mode == LOG)
+    {
+        // Input is C-Log 3: compute luma directly in log domain
+        luma = LW_R * p_R + LW_G * p_G + LW_B * p_B;
+    }
+    else
+    {
+        // Input is Rec.709: linearize, compute luma, convert to C-Log 3 scale
+        float lin_r = rec709_to_linear_f(p_R);
+        float lin_g = rec709_to_linear_f(p_G);
+        float lin_b = rec709_to_linear_f(p_B);
+        float lin_luma = LW_R * lin_r + LW_G * lin_g + LW_B * lin_b;
+        luma = linear_to_clog3_f(lin_luma);
+    }
+
+    return zone_color(luma);
+}
