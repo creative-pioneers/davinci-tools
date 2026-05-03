@@ -1,0 +1,35 @@
+// channel_isolation.dctl
+// ---------------------------------------------------------------------------
+// Purpose:   View individual R/G/B channels as greyscale or side-by-side triptych
+// Input:     Any color space (Rec.709, log, linear)
+// Output:    Single-channel greyscale or horizontal R|G|B triptych
+// Verified:  DaVinci Resolve 18.6
+// Note:      Triptych mode divides the frame into three equal horizontal thirds.
+//            Useful for diagnosing per-channel contamination, channel noise, or alignment.
+// ---------------------------------------------------------------------------
+//
+// Modes:
+//   Red      — full frame shows only the red channel as greyscale
+//   Green    — full frame shows only the green channel as greyscale
+//   Blue     — full frame shows only the blue channel as greyscale
+//   Triptych — left third = R, middle third = G, right third = B (all greyscale)
+
+DEFINE_UI_PARAMS(mode, Mode, DCTLUI_COMBO_BOX, 0, {MODE_RED, MODE_GREEN, MODE_BLUE, MODE_TRIPTYCH}, {Red, Green, Blue, Triptych (R|G|B)})
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                             float p_R, float p_G, float p_B)
+{
+    if (mode == MODE_TRIPTYCH)
+    {
+        // Divide frame into three equal horizontal sections: R | G | B
+        float t = (float)p_X / (float)p_Width;
+        float c;
+        if (t < 0.333f)       c = p_R;
+        else if (t < 0.667f)  c = p_G;
+        else                  c = p_B;
+        return make_float3(c, c, c);
+    }
+    else if (mode == MODE_RED)   return make_float3(p_R, p_R, p_R);
+    else if (mode == MODE_GREEN) return make_float3(p_G, p_G, p_G);
+    else                         return make_float3(p_B, p_B, p_B);
+}

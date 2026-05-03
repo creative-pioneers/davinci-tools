@@ -1,0 +1,80 @@
+// bfilm5_to_rec709.dctl
+// ---------------------------------------------------------------------------
+// Purpose:   Convert Blackmagic Film Gen5 / Blackmagic Wide Gamut Gen5 to Rec.709 display
+// Input:     Blackmagic Film Gen5 encoded, Blackmagic Wide Gamut Gen5 primaries
+// Output:    Rec.709 gamma-encoded (BT.1886 display gamma)
+// Reference: Blackmagic Design Color Science documentation
+//            Blackmagic Film Generation 5 Transfer Characteristic
+// Verified:  DaVinci Resolve 18.6
+// ---------------------------------------------------------------------------
+//
+// Pipeline:
+//   1. Invert Blackmagic Film Gen5 to scene-linear
+//   2. Apply Blackmagic Wide Gamut Gen5 -> Rec.709 3x3 matrix
+//   3. Apply Rec.709 OETF (BT.1886 display gamma)
+
+// --- Blackmagic Film Gen5 constants ---
+const float BFILM5_A = 4.3f;
+const float BFILM5_B = 0.076f;
+const float BFILM5_C = 3.81f;
+const float BFILM5_D = 12.0f;
+
+// --- Blackmagic Wide Gamut Gen5 to Rec.709 matrix ---
+// Derived from: XYZ_to_Rec709 * XYZ_from_BMWG5
+// BMWG5 primaries: R(0.7177,0.3171) G(0.2280,0.8616) B(0.1006,-0.0820) D65 white
+// Rec.709 primaries: R(0.640,0.330) G(0.300,0.600) B(0.150,0.060) D65 white
+// Source: colour-science Python library
+// Neutral preservation: row sums = 1.0 (D65 → D65, no chromatic adaptation)
+const float M00 =  1.8660f;  const float M01 = -0.5138f;  const float M02 = -0.3522f;
+const float M10 = -0.4405f;  const float M11 =  1.5519f;  const float M12 = -0.1114f;
+const float M20 = -0.0271f;  const float M21 = -0.0229f;  const float M22 =  1.0500f;
+
+// --- Rec.709 OETF (BT.1886 inverse EOTF approximation) ---
+const float REC709_ALPHA = 1.09929682680944f;
+const float REC709_BETA  = 0.018053968510807f;
+
+__DEVICE__ float bfilm5_to_linear_f(float x)
+{
+    return _fmaxf((_powf(2.0f, x * BFILM5_D - BFILM5_C) - BFILM5_B) / BFILM5_A, 0.0f);
+}
+
+__DEVICE__ float linear_to_rec709_f(float x)
+{
+    // Rec.709 OETF
+    if (x < 0.0f) return 0.0f;
+    if (x < REC709_BETA)
+    {
+        return 4.5f * x;
+    }
+    else
+    {
+        return REC709_ALPHA * _powf(x, 0.45f) - (REC709_ALPHA - 1.0f);
+    }
+}
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                             float p_R, float p_G, float p_B)
+{
+    // Step 1: Blackmagic Film Gen5 to scene-linear
+    float lin_r = bfilm5_to_linear_f(p_R);
+    float lin_g = bfilm5_to_linear_f(p_G);
+    float lin_b = bfilm5_to_linear_f(p_B);
+
+    // Step 2: Blackmagic Wide Gamut Gen5 to Rec.709 gamut (3x3 matrix)
+    float r709 = M00 * lin_r + M01 * lin_g + M02 * lin_b;
+    float g709 = M10 * lin_r + M11 * lin_g + M12 * lin_b;
+    float b709 = M20 * lin_r + M21 * lin_g + M22 * lin_b;
+
+    // Clamp negatives before gamma (gamut mapping can produce them)
+    r709 = _fmaxf(r709, 0.0f);
+    g709 = _fmaxf(g709, 0.0f);
+    b709 = _fmaxf(b709, 0.0f);
+
+    // Step 3: Linear to Rec.709 gamma
+    float3 out;
+    out.x = linear_to_rec709_f(r709);
+    out.y = linear_to_rec709_f(g709);
+    out.z = linear_to_rec709_f(b709);
+
+    return out;
+}

@@ -5,6 +5,9 @@
 // Output:    False color overlay with zone-based coloring
 // Reference: Canon C-Log 3 IRE mapping, standard false color zone scheme
 // Verified:  DaVinci Resolve 18.6
+// Note:     Zone thresholds tuned to Canon C-Log 3 IRE values.
+//           For a format-agnostic version with adjustable thresholds see false_color.dctl.
+//           For other formats see false_color_slog3.dctl, false_color_logc3.dctl, etc.
 // ---------------------------------------------------------------------------
 //
 // Zone scheme (C-Log 3 IRE values):

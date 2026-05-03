@@ -1,0 +1,140 @@
+// split_tone.dctl
+// ---------------------------------------------------------------------------
+// Purpose:   Apply independent hue/saturation shifts to shadows and highlights
+//            with a smooth crossover region
+// Input:     Any color space (works best on Rec.709 or display-referred signals)
+// Output:    Split-toned image
+// Verified:  DaVinci Resolve 18.6
+// Note:      Hue shifts are applied as deltas from original hue, not replacements.
+//            Place on a node after any log-to-display transform for predictable results.
+// ---------------------------------------------------------------------------
+//
+// The crossover is defined by a center point and a width. Pixels with luma
+// below (crossover - width/2) receive full shadow influence; pixels above
+// (crossover + width/2) receive full highlight influence. The transition
+// zone is smoothstepped for a natural look.
+//
+// Hue shifts are additive — the original hue is preserved and the delta is
+// applied on top, scaled by the saturation parameter for each zone.
+
+DEFINE_UI_PARAMS(shadow_hue,       Shadow Hue,              DCTLUI_SLIDER_FLOAT, 210.0f, 0.0f, 360.0f, 1.0f)
+DEFINE_UI_PARAMS(highlight_hue,    Highlight Hue,           DCTLUI_SLIDER_FLOAT,  35.0f, 0.0f, 360.0f, 1.0f)
+DEFINE_UI_PARAMS(shadow_sat,       Shadow Saturation,       DCTLUI_SLIDER_FLOAT,   0.2f, 0.0f,   1.0f, 0.01f)
+DEFINE_UI_PARAMS(highlight_sat,    Highlight Saturation,    DCTLUI_SLIDER_FLOAT,   0.2f, 0.0f,   1.0f, 0.01f)
+DEFINE_UI_PARAMS(crossover,        Crossover Point,         DCTLUI_SLIDER_FLOAT,   0.5f, 0.05f,  0.95f, 0.01f)
+DEFINE_UI_PARAMS(crossover_width,  Crossover Width,         DCTLUI_SLIDER_FLOAT,   0.3f, 0.05f,  0.8f, 0.01f)
+
+// Rec.709 luma weights
+const float LW_R = 0.2126f;
+const float LW_G = 0.7152f;
+const float LW_B = 0.0722f;
+
+// rgb_to_hsv — copied verbatim from skin_tone_indicator.dctl
+__DEVICE__ float3 rgb_to_hsv(float r, float g, float b)
+{
+    float cmax = _fmaxf(r, _fmaxf(g, b));
+    float cmin = _fminf(r, _fminf(g, b));
+    float delta = cmax - cmin;
+
+    float h = 0.0f;
+    float s = 0.0f;
+    float v = cmax;
+
+    if (delta > 0.0001f)
+    {
+        s = delta / cmax;
+
+        if (cmax == r)
+        {
+            h = 60.0f * ((g - b) / delta);
+            if (h < 0.0f) h += 360.0f;
+        }
+        else if (cmax == g)
+        {
+            h = 60.0f * ((b - r) / delta + 2.0f);
+        }
+        else
+        {
+            h = 60.0f * ((r - g) / delta + 4.0f);
+        }
+    }
+
+    return make_float3(h, s, v);
+}
+
+__DEVICE__ float3 hsv_to_rgb(float h, float s, float v)
+{
+    // Standard HSV to RGB conversion
+    if (s <= 0.0001f)
+        return make_float3(v, v, v);
+
+    // Wrap hue into [0, 360)
+    // Add 720 before modulo to handle up to two full negative rotations
+    h = h + 720.0f;
+    h = h - 360.0f * (float)(int)(h / 360.0f);
+
+    float sector = h / 60.0f;
+    int   i = (int)sector;
+    float f = sector - (float)i;
+
+    float p = v * (1.0f - s);
+    float q = v * (1.0f - s * f);
+    float t = v * (1.0f - s * (1.0f - f));
+
+    float r, g, b;
+    if      (i == 0) { r = v; g = t; b = p; }
+    else if (i == 1) { r = q; g = v; b = p; }
+    else if (i == 2) { r = p; g = v; b = t; }
+    else if (i == 3) { r = p; g = q; b = v; }
+    else if (i == 4) { r = t; g = p; b = v; }
+    else             { r = v; g = p; b = q; }
+
+    return make_float3(r, g, b);
+}
+
+__DEVICE__ float smoothstep_f(float edge0, float edge1, float x)
+{
+    float denom = edge1 - edge0;
+    if (_fabs(denom) < 0.0001f) return 0.5f;  // degenerate: crossover_width driven to 0 externally
+    float t = _fmaxf(0.0f, _fminf(1.0f, (x - edge0) / denom));
+    return t * t * (3.0f - 2.0f * t);
+}
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                             float p_R, float p_G, float p_B)
+{
+    // Compute luma for crossover blend
+    float luma = LW_R * p_R + LW_G * p_G + LW_B * p_B;
+
+    // t=0: full shadow influence, t=1: full highlight influence
+    float half_w = crossover_width * 0.5f;
+    float t = smoothstep_f(crossover - half_w, crossover + half_w, luma);
+
+    // Target hue deltas (in 0-1 normalized turns, then convert to degrees)
+    // Blend between shadow and highlight hue targets
+    float target_hue_deg = (1.0f - t) * shadow_hue + t * highlight_hue;
+
+    // Target saturation addition (blended between shadow and highlight zones)
+    float target_sat_add = (1.0f - t) * shadow_sat + t * highlight_sat;
+
+    // Convert pixel to HSV
+    float3 hsv = rgb_to_hsv(p_R, p_G, p_B);
+    float h = hsv.x;
+    float s = hsv.y;
+    float v = hsv.z;
+
+    // Apply hue shift as additive delta, scaled by how much saturation change is requested
+    // (zero saturation addition means no hue shift either — preserves neutral pixels)
+    float hue_shift = target_hue_deg - 180.0f;  // shift relative to neutral 180 deg
+    h = h + hue_shift * target_sat_add;
+
+    // Wrap hue into [0, 360)
+    // Add 720 before modulo to handle up to two full negative rotations
+    h = h + 720.0f;
+    h = h - 360.0f * (float)(int)(h / 360.0f);
+
+    // Add saturation (clamp to [0, 1])
+    s = _fminf(1.0f, _fmaxf(0.0f, s + target_sat_add));
+
+    return hsv_to_rgb(h, s, v);
+}

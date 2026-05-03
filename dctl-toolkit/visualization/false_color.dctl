@@ -1,0 +1,68 @@
+// false_color.dctl
+// ---------------------------------------------------------------------------
+// Purpose:   Format-agnostic false color exposure zone map with adjustable thresholds
+// Input:     Any signal (log, linear, Rec.709) — interpret thresholds accordingly
+// Output:    False color overlay with zone-based coloring
+// Reference: Standard false color zone scheme
+// Verified:  DaVinci Resolve 18.6
+// Note:     All nine zone boundaries are exposed as sliders so this tool adapts
+//           to any log encoding or display-referred signal. Default values are
+//           suitable for signals in roughly the 0-1 normalized range.
+//           For camera-tuned defaults see false_color_clog3.dctl,
+//           false_color_slog3.dctl, false_color_logc3.dctl.
+// ---------------------------------------------------------------------------
+//
+// Zone scheme (all thresholds are adjustable via UI):
+//   Purple  : < zone1   - crushed / underexposed blacks
+//   Blue    : zone1-zone2 - deep shadows
+//   Teal    : zone2-zone3 - shadow detail
+//   Green   : zone3-zone4 - middle grey
+//   Grey    : zone4-zone5 - upper midtones
+//   Pink    : zone5-zone6 - skin tones / bright midtones
+//   Yellow  : zone6-zone7 - highlights
+//   Orange  : zone7-zone8 - hot highlights (approaching clip)
+//   Red     : > zone8   - clipped
+
+DEFINE_UI_PARAMS(zone1, Zone 1 Threshold, DCTLUI_SLIDER_FLOAT, 0.10f, 0.0f, 1.0f, 0.01f)
+DEFINE_UI_PARAMS(zone2, Zone 2 Threshold, DCTLUI_SLIDER_FLOAT, 0.25f, 0.0f, 1.0f, 0.01f)
+DEFINE_UI_PARAMS(zone3, Zone 3 Threshold, DCTLUI_SLIDER_FLOAT, 0.35f, 0.0f, 1.0f, 0.01f)
+DEFINE_UI_PARAMS(zone4, Zone 4 Threshold, DCTLUI_SLIDER_FLOAT, 0.43f, 0.0f, 1.0f, 0.01f)
+DEFINE_UI_PARAMS(zone5, Zone 5 Threshold, DCTLUI_SLIDER_FLOAT, 0.50f, 0.0f, 1.0f, 0.01f)
+DEFINE_UI_PARAMS(zone6, Zone 6 Threshold, DCTLUI_SLIDER_FLOAT, 0.58f, 0.0f, 1.0f, 0.01f)
+DEFINE_UI_PARAMS(zone7, Zone 7 Threshold, DCTLUI_SLIDER_FLOAT, 0.75f, 0.0f, 1.0f, 0.01f)
+DEFINE_UI_PARAMS(zone8, Zone 8 Threshold, DCTLUI_SLIDER_FLOAT, 0.95f, 0.0f, 1.0f, 0.01f)
+
+// Rec.709 luma weights
+const float LW_R = 0.2126f;
+const float LW_G = 0.7152f;
+const float LW_B = 0.0722f;
+
+__DEVICE__ float3 zone_color(float luma, float z1, float z2, float z3, float z4,
+                              float z5, float z6, float z7, float z8)
+{
+    if (luma < z1)
+        return make_float3(0.4f, 0.0f, 0.6f);   // Purple - crushed
+    else if (luma < z2)
+        return make_float3(0.0f, 0.1f, 0.8f);   // Blue - shadows
+    else if (luma < z3)
+        return make_float3(0.0f, 0.6f, 0.6f);   // Teal - shadow detail
+    else if (luma < z4)
+        return make_float3(0.0f, 0.7f, 0.0f);   // Green - middle grey
+    else if (luma < z5)
+        return make_float3(0.5f, 0.5f, 0.5f);   // Grey - upper midtones
+    else if (luma < z6)
+        return make_float3(0.9f, 0.5f, 0.6f);   // Pink - skin tones / bright midtones
+    else if (luma < z7)
+        return make_float3(0.9f, 0.9f, 0.0f);   // Yellow - highlights
+    else if (luma < z8)
+        return make_float3(1.0f, 0.5f, 0.0f);   // Orange - hot highlights
+    else
+        return make_float3(1.0f, 0.0f, 0.0f);   // Red - clipped
+}
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                             float p_R, float p_G, float p_B)
+{
+    float luma = LW_R * p_R + LW_G * p_G + LW_B * p_B;
+    return zone_color(luma, zone1, zone2, zone3, zone4, zone5, zone6, zone7, zone8);
+}

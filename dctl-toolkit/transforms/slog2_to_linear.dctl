@@ -1,0 +1,39 @@
+// slog2_to_linear.dctl
+// ---------------------------------------------------------------------------
+// Purpose:   Convert Sony S-Log2 signal to scene-linear light
+// Input:     Sony S-Log2 encoded (A7S II, FS7, RX10 IV, etc.)
+// Output:    Scene-linear (same gamut as input)
+// Reference: Sony S-Log2 Transfer Characteristics (Sony Professional, 2016)
+// Verified:  DaVinci Resolve 18.6
+// Note:      Sony S-Log2 specific — older Sony log format. For modern Sony cameras
+//            (FX3, FX6, A7S III) use slog3_to_linear.dctl instead.
+// ---------------------------------------------------------------------------
+//
+// Sony S-Log2 forward encoding:
+//   IRE = 0.432699 * log10(x + 0.037584) + 0.616596 + 0.03   for x >= 0.0
+//   (no linear segment — cut is at x = 0; sub-zero values clamped on decode)
+//
+// This DCTL inverts that encoding to recover scene-linear values:
+//   x = pow(10, (IRE - 0.616596 - 0.03) / 0.432699) - 0.037584
+
+// Sony S-Log2 constants
+const float SLOG2_A = 0.432699f;
+const float SLOG2_B = 0.037584f;
+const float SLOG2_C = 0.616596f;
+const float SLOG2_D = 0.03f;
+
+__DEVICE__ float slog2_to_linear_f(float x)
+{
+    // Clamp sub-black values to 0.0 as documented — S-Log2 has no linear segment
+    return _fmaxf(_powf(10.0f, (x - SLOG2_C - SLOG2_D) / SLOG2_A) - SLOG2_B, 0.0f);
+}
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                             float p_R, float p_G, float p_B)
+{
+    float3 out;
+    out.x = slog2_to_linear_f(p_R);
+    out.y = slog2_to_linear_f(p_G);
+    out.z = slog2_to_linear_f(p_B);
+    return out;
+}

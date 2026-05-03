@@ -1,0 +1,117 @@
+// banding_viz.dctl
+// ---------------------------------------------------------------------------
+// Purpose:   Detect and highlight horizontal or vertical banding artifacts
+// Input:     Any color space — works on luma variations
+// Output:    Original image with banding regions tinted magenta
+// Verified:  DaVinci Resolve 18.6
+// Note:      Requires DaVinci Resolve Studio (multi-pixel DCTL access via __TEXTURE__ params).
+//            Best used on regions with smooth gradients (shadows, sky, skin).
+//            Works by measuring luma variance in a 5-pixel row/column neighborhood;
+//            pixels in unnaturally flat regions are flagged as potential banding.
+// ---------------------------------------------------------------------------
+//
+// Banding detection logic:
+//   Sample a 5-pixel strip centered on the current pixel (horizontal and/or vertical).
+//   Compute the range (max - min) of luma values in that strip.
+//   If the range is smaller than the sensitivity threshold, the region is suspiciously flat
+//   and likely to be a banding artifact. Very dark pixels are excluded to prevent
+//   false positives in pure black regions.
+//   In Both mode, a pixel is flagged only if BOTH axes are flat simultaneously.
+
+DEFINE_UI_PARAMS(sensitivity,     Sensitivity,     DCTLUI_SLIDER_FLOAT, 0.010f, 0.001f, 0.05f,  0.001f)
+DEFINE_UI_PARAMS(overlay_opacity, Overlay Opacity, DCTLUI_SLIDER_FLOAT, 0.80f,  0.1f,   1.0f,   0.05f)
+DEFINE_UI_PARAMS(direction,       Direction,       DCTLUI_COMBO_BOX,    0, {DIR_H, DIR_V, DIR_BOTH}, {Horizontal, Vertical, Both})
+DEFINE_UI_PARAMS(view_mode,       View Mode,       DCTLUI_COMBO_BOX,    0, {MODE_OVERLAY, MODE_ISOLATED}, {Overlay, Isolated})
+
+// Rec.709 luma weights
+const float LW_R = 0.2126f;
+const float LW_G = 0.7152f;
+const float LW_B = 0.0722f;
+
+__DEVICE__ float luma_at(__TEXTURE__ p_TexR, __TEXTURE__ p_TexG, __TEXTURE__ p_TexB,
+                          int x, int y, int w, int h)
+{
+    // Clamp coordinates to valid texture range before sampling
+    int cx = x < 0 ? 0 : (x > w - 1 ? w - 1 : x);
+    int cy = y < 0 ? 0 : (y > h - 1 ? h - 1 : y);
+    float r = _tex2D(p_TexR, cx, cy);
+    float g = _tex2D(p_TexG, cx, cy);
+    float b = _tex2D(p_TexB, cx, cy);
+    return LW_R * r + LW_G * g + LW_B * b;
+}
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                              __TEXTURE__ p_TexR, __TEXTURE__ p_TexG, __TEXTURE__ p_TexB)
+{
+    // Sample center pixel
+    float center_r = _tex2D(p_TexR, p_X, p_Y);
+    float center_g = _tex2D(p_TexG, p_X, p_Y);
+    float center_b = _tex2D(p_TexB, p_X, p_Y);
+    float center_luma = LW_R * center_r + LW_G * center_g + LW_B * center_b;
+
+    // Skip very dark pixels to avoid false positives in pure black regions
+    if (center_luma < 0.02f)
+    {
+        if (view_mode == MODE_ISOLATED)
+            return make_float3(0.0f, 0.0f, 0.0f);
+        return make_float3(center_r, center_g, center_b);
+    }
+
+    // --- Horizontal 5-pixel strip range ---
+    float h_range = 0.0f;
+    if (direction == DIR_H || direction == DIR_BOTH)
+    {
+        float h0 = luma_at(p_TexR, p_TexG, p_TexB, p_X - 2, p_Y, p_Width, p_Height);
+        float h1 = luma_at(p_TexR, p_TexG, p_TexB, p_X - 1, p_Y, p_Width, p_Height);
+        float h2 = center_luma;
+        float h3 = luma_at(p_TexR, p_TexG, p_TexB, p_X + 1, p_Y, p_Width, p_Height);
+        float h4 = luma_at(p_TexR, p_TexG, p_TexB, p_X + 2, p_Y, p_Width, p_Height);
+        float hmax = _fmaxf(h0, _fmaxf(h1, _fmaxf(h2, _fmaxf(h3, h4))));
+        float hmin = _fminf(h0, _fminf(h1, _fminf(h2, _fminf(h3, h4))));
+        h_range = hmax - hmin;
+    }
+
+    // --- Vertical 5-pixel strip range ---
+    float v_range = 0.0f;
+    if (direction == DIR_V || direction == DIR_BOTH)
+    {
+        float v0 = luma_at(p_TexR, p_TexG, p_TexB, p_X, p_Y - 2, p_Width, p_Height);
+        float v1 = luma_at(p_TexR, p_TexG, p_TexB, p_X, p_Y - 1, p_Width, p_Height);
+        float v2 = center_luma;
+        float v3 = luma_at(p_TexR, p_TexG, p_TexB, p_X, p_Y + 1, p_Width, p_Height);
+        float v4 = luma_at(p_TexR, p_TexG, p_TexB, p_X, p_Y + 2, p_Width, p_Height);
+        float vmax = _fmaxf(v0, _fmaxf(v1, _fmaxf(v2, _fmaxf(v3, v4))));
+        float vmin = _fminf(v0, _fminf(v1, _fminf(v2, _fminf(v3, v4))));
+        v_range = vmax - vmin;
+    }
+
+    // --- Determine if this pixel is flagged as banding ---
+    bool flagged = false;
+    if (direction == DIR_H)
+        flagged = (h_range < sensitivity);
+    else if (direction == DIR_V)
+        flagged = (v_range < sensitivity);
+    else
+        // Both: flat in BOTH axes simultaneously — strongest banding indicator
+        flagged = (h_range < sensitivity) && (v_range < sensitivity);
+
+    if (!flagged)
+    {
+        if (view_mode == MODE_ISOLATED)
+            return make_float3(0.0f, 0.0f, 0.0f);
+        return make_float3(center_r, center_g, center_b);
+    }
+
+    // Banding detected: apply magenta overlay or return isolated magenta
+    if (view_mode == MODE_ISOLATED)
+    {
+        return make_float3(1.0f, 0.0f, 1.0f);
+    }
+
+    // Overlay mode: blend magenta with original at overlay_opacity
+    float3 out;
+    out.x = center_r * (1.0f - overlay_opacity) + 1.0f * overlay_opacity;
+    out.y = center_g * (1.0f - overlay_opacity) + 0.0f * overlay_opacity;
+    out.z = center_b * (1.0f - overlay_opacity) + 1.0f * overlay_opacity;
+    return out;
+}

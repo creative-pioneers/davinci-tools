@@ -1,0 +1,70 @@
+// luma_key.dctl
+// ---------------------------------------------------------------------------
+// Purpose:   Apply lift/gain correction only to pixels within a configurable luma range
+// Input:     Any color space (linear or gamma-encoded)
+// Output:    Selectively adjusted image — correction applied within luma window
+// Verified:  DaVinci Resolve 18.6
+// Note:      Useful for applying targeted corrections in non-standard log spaces where
+//            Resolve's HSL qualifier may not key cleanly. Soft edges prevent hard transitions.
+//            Place on a node after any log-to-display transform for most predictable results.
+// ---------------------------------------------------------------------------
+//
+// Key strength is 1.0 inside the luma window [luma_low+soft, luma_high-soft] and
+// smoothly falls off to 0 at the window edges [luma_low, luma_high]. If luma_low
+// >= luma_high the key is forced to 0 (no correction applied).
+//
+// Correction applied: r_corr = (p_R + lift_r) * gain_r
+// Final output:       out = original + key * (corrected - original)
+
+DEFINE_UI_PARAMS(luma_low,  Luma Low,  DCTLUI_SLIDER_FLOAT, 0.0f,  0.0f, 1.0f,  0.01f)
+DEFINE_UI_PARAMS(luma_high, Luma High, DCTLUI_SLIDER_FLOAT, 0.5f,  0.0f, 1.0f,  0.01f)
+DEFINE_UI_PARAMS(edge_soft, Edge Soft, DCTLUI_SLIDER_FLOAT, 0.1f,  0.0f, 0.5f,  0.01f)
+DEFINE_UI_PARAMS(lift_r,    Lift R,    DCTLUI_SLIDER_FLOAT, 0.0f, -0.5f, 0.5f,  0.01f)
+DEFINE_UI_PARAMS(lift_g,    Lift G,    DCTLUI_SLIDER_FLOAT, 0.0f, -0.5f, 0.5f,  0.01f)
+DEFINE_UI_PARAMS(lift_b,    Lift B,    DCTLUI_SLIDER_FLOAT, 0.0f, -0.5f, 0.5f,  0.01f)
+DEFINE_UI_PARAMS(gain_r,    Gain R,    DCTLUI_SLIDER_FLOAT, 1.0f,  0.0f, 3.0f,  0.01f)
+DEFINE_UI_PARAMS(gain_g,    Gain G,    DCTLUI_SLIDER_FLOAT, 1.0f,  0.0f, 3.0f,  0.01f)
+DEFINE_UI_PARAMS(gain_b,    Gain B,    DCTLUI_SLIDER_FLOAT, 1.0f,  0.0f, 3.0f,  0.01f)
+
+// Rec.709 luma weights
+const float LW_R = 0.2126f;
+const float LW_G = 0.7152f;
+const float LW_B = 0.0722f;
+
+__DEVICE__ float smoothstep_f(float edge0, float edge1, float x)
+{
+    // NaN-guarded smoothstep — same implementation as split_tone.dctl
+    float denom = edge1 - edge0;
+    if (_fabs(denom) < 0.0001f) return 0.5f;
+    float t = _fmaxf(0.0f, _fminf(1.0f, (x - edge0) / denom));
+    return t * t * (3.0f - 2.0f * t);
+}
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                             float p_R, float p_G, float p_B)
+{
+    float luma = LW_R * p_R + LW_G * p_G + LW_B * p_B;
+
+    // Guard: if window is degenerate, apply no correction
+    float key = 0.0f;
+    if (luma_high > luma_low)
+    {
+        // Rise from 0 to 1 at the low edge, fall from 1 to 0 at the high edge
+        float rise = smoothstep_f(luma_low, luma_low + edge_soft, luma);
+        float fall = 1.0f - smoothstep_f(luma_high - edge_soft, luma_high, luma);
+        key = rise * fall;
+    }
+
+    // Apply lift and gain correction
+    float r_corr = (p_R + lift_r) * gain_r;
+    float g_corr = (p_G + lift_g) * gain_g;
+    float b_corr = (p_B + lift_b) * gain_b;
+
+    // Blend corrected result into original using key strength
+    float3 out;
+    out.x = p_R + key * (r_corr - p_R);
+    out.y = p_G + key * (g_corr - p_G);
+    out.z = p_B + key * (b_corr - p_B);
+
+    return out;
+}

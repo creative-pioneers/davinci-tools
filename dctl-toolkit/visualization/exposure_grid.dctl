@@ -1,0 +1,92 @@
+// exposure_grid.dctl
+// ---------------------------------------------------------------------------
+// Purpose:   False color map with stops relative to a user-declared middle grey
+// Input:     Linear or log signal (user selects mode)
+// Output:    Stop-relative zone coloring
+// Verified:  DaVinci Resolve 18.6
+// Note:      Unlike false_color.dctl which uses absolute IRE thresholds, this tool
+//            colors zones relative to a declared middle grey anchor value, making it
+//            useful for matching exposure across different camera formats.
+//            In Linear mode, each stop = 2x the linear value of the previous stop.
+//            In Log mode, zone width is approximated as equal linear steps from grey.
+// ---------------------------------------------------------------------------
+//
+// Stop index 0 = middle grey zone, negative = below grey, positive = above grey.
+// Each zone is colored from a 10-step palette cycling from deep shadow to overexposed.
+
+DEFINE_UI_PARAMS(middle_grey,  Middle Grey,  DCTLUI_SLIDER_FLOAT, 0.18f, 0.05f, 0.95f, 0.01f)
+DEFINE_UI_PARAMS(stops_above,  Stops Above,  DCTLUI_SLIDER_INT,   4,     1,     8,     1)
+DEFINE_UI_PARAMS(stops_below,  Stops Below,  DCTLUI_SLIDER_INT,   4,     1,     8,     1)
+DEFINE_UI_PARAMS(input_mode,   Input Mode,   DCTLUI_COMBO_BOX,    0, {MODE_LINEAR, MODE_LOG}, {Linear, Log (approx)})
+
+// Rec.709 luma weights
+const float LW_R = 0.2126f;
+const float LW_G = 0.7152f;
+const float LW_B = 0.0722f;
+
+__DEVICE__ float3 stop_color(int stop_index)
+{
+    // stop_index: 0 = middle grey zone, negative = below grey, positive = above grey
+    // Palette: purple, blue, teal, dark green, bright green (middle), grey, pink, yellow, orange, red
+    if (stop_index <= -4) return make_float3(0.4f, 0.0f, 0.6f);   // deep shadow - purple
+    if (stop_index == -3) return make_float3(0.0f, 0.1f, 0.8f);   // blue
+    if (stop_index == -2) return make_float3(0.0f, 0.6f, 0.6f);   // teal
+    if (stop_index == -1) return make_float3(0.2f, 0.5f, 0.2f);   // dark green (below grey)
+    if (stop_index ==  0) return make_float3(0.0f, 0.8f, 0.0f);   // bright green (middle grey zone)
+    if (stop_index ==  1) return make_float3(0.5f, 0.5f, 0.5f);   // grey (1 stop above)
+    if (stop_index ==  2) return make_float3(0.9f, 0.5f, 0.6f);   // pink
+    if (stop_index ==  3) return make_float3(0.9f, 0.9f, 0.0f);   // yellow
+    if (stop_index ==  4) return make_float3(1.0f, 0.5f, 0.0f);   // orange
+    return make_float3(1.0f, 0.0f, 0.0f);                          // red - overexposed
+}
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                             float p_R, float p_G, float p_B)
+{
+    // Compute luma
+    float luma = LW_R * p_R + LW_G * p_G + LW_B * p_B;
+
+    int zone;
+
+    if (input_mode == MODE_LINEAR)
+    {
+        // In linear space, each stop is a factor of 2.
+        // Compute stop index as: floor(log2(luma / middle_grey) + 0.5)
+        // Adding 0.5 centers the green zone on middle_grey (±0.5 stop window).
+        float safe_luma = _fmaxf(luma, 0.00001f);
+        float safe_grey = _fmaxf(middle_grey, 0.00001f);
+        float log2_luma = _log2f(safe_luma);
+        float log2_grey = _log2f(safe_grey);
+        // (int) truncates toward zero; add 0.5 before truncation for round-to-nearest
+        float stop_f = log2_luma - log2_grey;
+        // Manual round: add 0.5 and truncate, but handle negatives correctly
+        if (stop_f >= 0.0f)
+            zone = (int)(stop_f + 0.5f);
+        else
+            zone = -(int)(-stop_f + 0.5f);
+    }
+    else
+    {
+        // In log space, estimate stop width as equal linear steps from middle grey.
+        // Average step size bridging both sides for a symmetric feel.
+        float safe_grey = _fmaxf(middle_grey, 0.00001f);
+        float step_above = (1.0f - safe_grey) / (float)stops_above;
+        float step_below = safe_grey / (float)stops_below;
+        float step = (step_above + step_below) * 0.5f;
+        // Guard against degenerate step
+        if (step < 0.00001f) step = 0.00001f;
+        float stop_f = (luma - safe_grey) / step;
+        if (stop_f >= 0.0f)
+            zone = (int)(stop_f + 0.5f);
+        else
+            zone = -(int)(-stop_f + 0.5f);
+    }
+
+    // Clamp zone to displayable range (one past each limit = out-of-range color)
+    int lo = -(stops_below + 1);
+    int hi =  (stops_above + 1);
+    if (zone < lo) zone = lo;
+    if (zone > hi) zone = hi;
+
+    return stop_color(zone);
+}

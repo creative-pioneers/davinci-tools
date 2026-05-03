@@ -15,6 +15,7 @@ case "$(uname -s)" in
         LUT_DIR="$HOME/.local/share/DaVinciResolve/LUT"
         ;;
     MINGW*|MSYS*|CYGWIN*)
+        : "${APPDATA:?Error: APPDATA environment variable is not set}"
         LUT_DIR="$APPDATA/Blackmagic Design/DaVinci Resolve/Support/LUT"
         ;;
     *)
@@ -50,6 +51,7 @@ fi
 mkdir -p "$TARGET_DIR/transforms"
 mkdir -p "$TARGET_DIR/visualization"
 mkdir -p "$TARGET_DIR/diagnostic"
+mkdir -p "$TARGET_DIR/grading"
 
 # Symlink all DCTL files
 link_dctl() {
@@ -80,6 +82,11 @@ done
 echo "Diagnostic:"
 for f in "$SCRIPT_DIR"/diagnostic/*.dctl; do
     [[ -f "$f" ]] && link_dctl "$f" "$TARGET_DIR/diagnostic"
+done
+
+echo "Grading:"
+for f in "$SCRIPT_DIR"/grading/*.dctl; do
+    [[ -f "$f" ]] && link_dctl "$f" "$TARGET_DIR/grading"
 done
 
 echo ""

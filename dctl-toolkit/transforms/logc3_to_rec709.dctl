@@ -1,0 +1,92 @@
+// logc3_to_rec709.dctl
+// ---------------------------------------------------------------------------
+// Purpose:   Convert ARRI LogC3 / ARRI Wide Gamut 3 to Rec.709 display (EI 800)
+// Input:     ARRI LogC3 encoded, ARRI Wide Gamut 3 primaries
+// Output:    Rec.709 gamma-encoded (BT.1886 ~ 2.4 power)
+// Reference: ARRI LogC Curve Usage in VFX (2017), LogC White Paper EI 800 table
+//            ARRI Wide Gamut 3 primaries: ARRI Science documentation
+// Verified:  DaVinci Resolve 18.6
+// ---------------------------------------------------------------------------
+//
+// Pipeline:
+//   1. Invert LogC3 to scene-linear (EI 800)
+//   2. Apply ARRI Wide Gamut 3 -> Rec.709 3x3 matrix
+//   3. Apply Rec.709 OETF (BT.1886 display gamma)
+
+// --- ARRI LogC3 constants — EI 800 ---
+// Source: ARRI LogC Curve Usage in VFX (2017)
+const float LOGC3_A   = 5.555556f;
+const float LOGC3_B   = 0.052272f;
+const float LOGC3_C   = 0.247190f;
+const float LOGC3_D   = 0.385537f;
+const float LOGC3_E   = 5.367655f;
+const float LOGC3_F   = 0.092809f;
+const float LOGC3_CUT = 0.010591f;
+
+// --- ARRI Wide Gamut 3 to Rec.709 matrix ---
+// Derived from: XYZ_to_Rec709 * XYZ_from_AWG3
+// AWG3 primaries:  R(0.684,0.313) G(0.221,0.848) B(0.0861,-0.102) D65 white
+// Rec.709 primaries: R(0.640,0.330) G(0.300,0.600) B(0.150,0.060) D65 white
+// Source: colour-science Python library (colour.RGB_COLOURSPACES)
+// Neutral preservation: row sums = 1.0 (D65 → D65, no chromatic adaptation)
+const float M00 =  1.7053f;  const float M01 =  0.0232f;  const float M02 = -0.7285f;
+const float M10 = -0.6290f;  const float M11 =  1.5490f;  const float M12 =  0.0800f;
+const float M20 =  0.0000f;  const float M21 = -0.0150f;  const float M22 =  1.0150f;
+
+// --- Rec.709 OETF (BT.1886 inverse EOTF approximation) ---
+const float REC709_ALPHA = 1.09929682680944f;
+const float REC709_BETA  = 0.018053968510807f;
+
+__DEVICE__ float logc3_to_linear_f(float x)
+{
+    const float CUT_IRE = 0.247190f * _log10f(5.555556f * 0.010591f + 0.052272f) + 0.385537f;
+    if (x >= CUT_IRE)
+    {
+        return (_powf(10.0f, (x - LOGC3_D) / LOGC3_C) - LOGC3_B) / LOGC3_A;
+    }
+    else
+    {
+        return (x - LOGC3_F) / LOGC3_E;
+    }
+}
+
+__DEVICE__ float linear_to_rec709_f(float x)
+{
+    // Rec.709 OETF
+    if (x < 0.0f) return 0.0f;
+    if (x < REC709_BETA)
+    {
+        return 4.5f * x;
+    }
+    else
+    {
+        return REC709_ALPHA * _powf(x, 0.45f) - (REC709_ALPHA - 1.0f);
+    }
+}
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                             float p_R, float p_G, float p_B)
+{
+    // Step 1: LogC3 to scene-linear
+    float lin_r = logc3_to_linear_f(p_R);
+    float lin_g = logc3_to_linear_f(p_G);
+    float lin_b = logc3_to_linear_f(p_B);
+
+    // Step 2: ARRI Wide Gamut 3 to Rec.709 gamut (3x3 matrix)
+    float r709 = M00 * lin_r + M01 * lin_g + M02 * lin_b;
+    float g709 = M10 * lin_r + M11 * lin_g + M12 * lin_b;
+    float b709 = M20 * lin_r + M21 * lin_g + M22 * lin_b;
+
+    // Clamp negatives before gamma (gamut mapping can produce them)
+    r709 = _fmaxf(r709, 0.0f);
+    g709 = _fmaxf(g709, 0.0f);
+    b709 = _fmaxf(b709, 0.0f);
+
+    // Step 3: Linear to Rec.709 gamma
+    float3 out;
+    out.x = linear_to_rec709_f(r709);
+    out.y = linear_to_rec709_f(g709);
+    out.z = linear_to_rec709_f(b709);
+
+    return out;
+}

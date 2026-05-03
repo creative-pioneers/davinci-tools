@@ -1,0 +1,63 @@
+// false_color_slog2.dctl
+// ---------------------------------------------------------------------------
+// Purpose:   False color exposure map tuned for Sony S-Log2 log values
+// Input:     Sony S-Log2 encoded
+// Output:    False color overlay with zone-based coloring
+// Reference: Zone thresholds derived from forward encoding of semantic linear values
+//            through Sony S-Log2 transfer characteristic
+// Verified:  DaVinci Resolve 18.6
+// Note:      Zone thresholds tuned to Sony S-Log2 IRE values.
+//            Middle grey (~18% linear) encodes to approximately 0.360 in S-Log2 —
+//            notably lower than S-Log3 (0.411). S-Log2 places shadows much higher
+//            than other formats; the Blue-to-Green zone spans a much wider linear
+//            range than equivalent zones in S-Log3 or LogC3.
+//            For a format-agnostic version with adjustable thresholds see false_color.dctl.
+//            For modern Sony cameras (FX3, FX6, A7S III) see false_color_slog3.dctl.
+// ---------------------------------------------------------------------------
+//
+// Zone scheme (S-Log2 IRE values, derived from forward encoding of reference linears):
+//   Purple  : < 0.033   - crushed / underexposed blacks      (linear ~0.005)
+//   Blue    : 0.033-0.250 - deep shadows (wide range — S-Log2 characteristic)
+//   Teal    : 0.250-0.320 - shadow detail                    (linear ~0.09)
+//   Green   : 0.320-0.370 - middle grey (~18% grey = ~0.360) (linear ~0.18)
+//   Grey    : 0.370-0.406 - upper midtones                   (linear ~0.38)
+//   Pink    : 0.406-0.430 - skin tones / bright midtones     (linear ~0.56)
+//   Yellow  : 0.430-0.500 - highlights                       (linear ~1.0)
+//   Orange  : 0.500-0.604 - hot highlights (approaching clip)(linear ~3.5)
+//   Red     : > 0.604    - clipped                           (linear ~10.0)
+
+// Rec.709 luma weights
+const float LW_R = 0.2126f;
+const float LW_G = 0.7152f;
+const float LW_B = 0.0722f;
+
+__DEVICE__ float3 zone_color(float luma)
+{
+    // Zone thresholds and colors for S-Log2 IRE values
+    if (luma < 0.033f)
+        return make_float3(0.4f, 0.0f, 0.6f);   // Purple - crushed
+    else if (luma < 0.250f)
+        return make_float3(0.0f, 0.1f, 0.8f);   // Blue - deep shadows (wide range in S-Log2)
+    else if (luma < 0.320f)
+        return make_float3(0.0f, 0.6f, 0.6f);   // Teal - shadow detail
+    else if (luma < 0.370f)
+        return make_float3(0.0f, 0.7f, 0.0f);   // Green - middle grey (~0.360)
+    else if (luma < 0.406f)
+        return make_float3(0.5f, 0.5f, 0.5f);   // Grey - upper midtones
+    else if (luma < 0.430f)
+        return make_float3(0.9f, 0.5f, 0.6f);   // Pink - skin tones
+    else if (luma < 0.500f)
+        return make_float3(0.9f, 0.9f, 0.0f);   // Yellow - highlights
+    else if (luma < 0.604f)
+        return make_float3(1.0f, 0.5f, 0.0f);   // Orange - hot highlights
+    else
+        return make_float3(1.0f, 0.0f, 0.0f);   // Red - clipped
+}
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                             float p_R, float p_G, float p_B)
+{
+    // Input is S-Log2: compute luma directly in log domain
+    float luma = LW_R * p_R + LW_G * p_G + LW_B * p_B;
+    return zone_color(luma);
+}

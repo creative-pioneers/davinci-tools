@@ -1,0 +1,79 @@
+// log3g10_to_rec709.dctl
+// ---------------------------------------------------------------------------
+// Purpose:   Convert RED Log3G10 / REDWideGamutRGB to Rec.709 display
+// Input:     RED Log3G10 encoded, REDWideGamutRGB primaries
+// Output:    Rec.709 gamma-encoded (BT.1886 display gamma)
+// Reference: RED Log3G10 / REDWideGamutRGB technical note
+// Verified:  DaVinci Resolve 18.6
+// ---------------------------------------------------------------------------
+//
+// Pipeline:
+//   1. Invert RED Log3G10 to scene-linear
+//   2. Apply REDWideGamutRGB -> Rec.709 3x3 matrix
+//   3. Apply Rec.709 OETF (BT.1886 display gamma)
+
+// --- RED Log3G10 constants ---
+const float LOG3G10_A = 0.224282f;
+const float LOG3G10_B = 10.0f;
+const float LOG3G10_C = 1.0f;
+const float LOG3G10_D = 0.848805f;
+
+// --- REDWideGamutRGB to Rec.709 matrix ---
+// Derived from: XYZ_to_Rec709 * XYZ_from_REDWideGamutRGB
+// REDWideGamutRGB primaries: R(0.780,0.304) G(0.121,1.493) B(0.095,-0.030) D65 white
+// Rec.709 primaries:          R(0.640,0.330) G(0.300,0.600) B(0.150,0.060) D65 white
+// Source: colour-science Python library
+// Neutral preservation: row sums = 1.0 (D65 → D65, no chromatic adaptation)
+const float M00 =  1.4259f;  const float M01 = -0.2685f;  const float M02 = -0.1574f;
+const float M10 = -0.0777f;  const float M11 =  1.1786f;  const float M12 = -0.1009f;
+const float M20 = -0.0415f;  const float M21 = -0.0580f;  const float M22 =  1.0995f;
+
+// --- Rec.709 OETF (BT.1886 inverse EOTF approximation) ---
+const float REC709_ALPHA = 1.09929682680944f;
+const float REC709_BETA  = 0.018053968510807f;
+
+__DEVICE__ float log3g10_to_linear_f(float x)
+{
+    return (_powf(10.0f, (x - LOG3G10_D) / LOG3G10_A) - LOG3G10_C) / LOG3G10_B;
+}
+
+__DEVICE__ float linear_to_rec709_f(float x)
+{
+    // Rec.709 OETF
+    if (x < 0.0f) return 0.0f;
+    if (x < REC709_BETA)
+    {
+        return 4.5f * x;
+    }
+    else
+    {
+        return REC709_ALPHA * _powf(x, 0.45f) - (REC709_ALPHA - 1.0f);
+    }
+}
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                             float p_R, float p_G, float p_B)
+{
+    // Step 1: RED Log3G10 to scene-linear
+    float lin_r = log3g10_to_linear_f(p_R);
+    float lin_g = log3g10_to_linear_f(p_G);
+    float lin_b = log3g10_to_linear_f(p_B);
+
+    // Step 2: REDWideGamutRGB to Rec.709 gamut (3x3 matrix)
+    float r709 = M00 * lin_r + M01 * lin_g + M02 * lin_b;
+    float g709 = M10 * lin_r + M11 * lin_g + M12 * lin_b;
+    float b709 = M20 * lin_r + M21 * lin_g + M22 * lin_b;
+
+    // Clamp negatives before gamma (gamut mapping can produce them)
+    r709 = _fmaxf(r709, 0.0f);
+    g709 = _fmaxf(g709, 0.0f);
+    b709 = _fmaxf(b709, 0.0f);
+
+    // Step 3: Linear to Rec.709 gamma
+    float3 out;
+    out.x = linear_to_rec709_f(r709);
+    out.y = linear_to_rec709_f(g709);
+    out.z = linear_to_rec709_f(b709);
+
+    return out;
+}

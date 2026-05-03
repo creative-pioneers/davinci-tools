@@ -1,0 +1,45 @@
+// vlogl_to_linear.dctl
+// ---------------------------------------------------------------------------
+// Purpose:   Convert Panasonic V-Log L signal to scene-linear light
+// Input:     Panasonic V-Log L encoded (GH5, S1H, G9, BGH1, S5 II, etc.)
+// Output:    Scene-linear (same gamut as input)
+// Reference: Panasonic V-Log/V-Gamut specification
+// Verified:  DaVinci Resolve 18.6
+// Note:      Panasonic V-Log L specific — used in Lumix mirrorless and cinema cameras.
+//            V-Log L has a linear segment near black for smooth shadow rendering.
+// ---------------------------------------------------------------------------
+//
+// Panasonic V-Log L forward encoding (piecewise):
+//   For x >= 0.01: IRE = 0.241514 * log10(x + 0.00873) + 0.598206
+//   For x <  0.01: IRE = 5.6 * x + 0.125
+//
+// This DCTL inverts that encoding:
+//   Log segment  (IRE >= 0.181): x = pow(10, (IRE - 0.598206) / 0.241514) - 0.00873
+//   Linear segment (IRE < 0.181): x = (IRE - 0.125) / 5.6
+//   (0.181 = 5.6 * 0.01 + 0.125, the encoded value of the linear/log cutpoint)
+
+// Panasonic V-Log L constants
+const float VLOGL_A       = 0.241514f;
+const float VLOGL_B       = 0.00873f;
+const float VLOGL_C       = 0.598206f;
+const float VLOGL_D       = 5.6f;
+const float VLOGL_E       = 0.125f;
+const float VLOGL_CUT_IRE = 0.181f;   // 5.6 * 0.01 + 0.125
+
+__DEVICE__ float vlogl_to_linear_f(float x)
+{
+    if (x >= VLOGL_CUT_IRE)
+        return _powf(10.0f, (x - VLOGL_C) / VLOGL_A) - VLOGL_B;
+    else
+        return (x - VLOGL_E) / VLOGL_D;
+}
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                             float p_R, float p_G, float p_B)
+{
+    float3 out;
+    out.x = vlogl_to_linear_f(p_R);
+    out.y = vlogl_to_linear_f(p_G);
+    out.z = vlogl_to_linear_f(p_B);
+    return out;
+}

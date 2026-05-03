@@ -1,0 +1,39 @@
+// log3g10_to_linear.dctl
+// ---------------------------------------------------------------------------
+// Purpose:   Convert RED Log3G10 signal to scene-linear light
+// Input:     RED Log3G10 encoded (RED KOMODO, MONSTRO, HELIUM, GEMINI, etc.)
+// Output:    Scene-linear (same gamut as input)
+// Reference: RED Log3G10 / REDWideGamutRGB technical note
+// Verified:  DaVinci Resolve 18.6
+// Note:      RED Log3G10 specific — designed for RED digital cinema cameras.
+//            The inverse can produce negative linear values (RED cameras encode
+//            below-black scene-linear values); these are not clamped here.
+// ---------------------------------------------------------------------------
+//
+// RED Log3G10 forward encoding:
+//   IRE = 0.224282 * log10(10.0 * x + 1.0) + 0.848805   for x >= -0.01
+//   (values below x = -0.01 are clamped on encode)
+//
+// This DCTL inverts that encoding to recover scene-linear values:
+//   x = (pow(10, (IRE - 0.848805) / 0.224282) - 1.0) / 10.0
+
+// RED Log3G10 constants
+const float LOG3G10_A = 0.224282f;
+const float LOG3G10_B = 10.0f;
+const float LOG3G10_C = 1.0f;
+const float LOG3G10_D = 0.848805f;
+
+__DEVICE__ float log3g10_to_linear_f(float x)
+{
+    return (_powf(10.0f, (x - LOG3G10_D) / LOG3G10_A) - LOG3G10_C) / LOG3G10_B;
+}
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                             float p_R, float p_G, float p_B)
+{
+    float3 out;
+    out.x = log3g10_to_linear_f(p_R);
+    out.y = log3g10_to_linear_f(p_G);
+    out.z = log3g10_to_linear_f(p_B);
+    return out;
+}

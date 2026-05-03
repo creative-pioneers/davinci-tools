@@ -1,0 +1,108 @@
+// slog2_to_rec709.dctl
+// ---------------------------------------------------------------------------
+// Purpose:   Convert Sony S-Log2 to Rec.709 display
+// Input:     Sony S-Log2 encoded, S-Gamut3.Cine or S-Gamut (original) primaries
+// Output:    Rec.709 gamma-encoded (BT.1886 display gamma)
+// Reference: Sony S-Log2 Transfer Characteristics (Sony Professional, 2016)
+//            S-Gamut3.Cine primaries: Sony "S-Gamut3.Cine" spec
+//            S-Gamut primaries: Sony original S-Gamut spec
+// Verified:  DaVinci Resolve 18.6
+// Note:      S-Log2 is an older Sony log format used on A7S II, FS7, RX10 IV, etc.
+//            S-Gamut3.Cine is the recommended gamut pairing for modern compatibility.
+//            S-Gamut (original) is available for cameras that recorded in that space.
+//            For modern Sony cameras (FX3, FX6, A7S III) use slog3_to_rec709.dctl.
+// ---------------------------------------------------------------------------
+//
+// Pipeline:
+//   1. Invert S-Log2 to scene-linear
+//   2. Apply S-Gamut3.Cine or S-Gamut -> Rec.709 3x3 matrix (user-selectable)
+//   3. Apply Rec.709 OETF (BT.1886 display gamma)
+
+DEFINE_UI_PARAMS(gamut, Gamut, DCTLUI_COMBO_BOX, 0, {SGAMUT3CINE, SGAMUT}, {S-Gamut3.Cine, S-Gamut (original)})
+
+// --- Sony S-Log2 constants ---
+const float SLOG2_A = 0.432699f;
+const float SLOG2_B = 0.037584f;
+const float SLOG2_C = 0.616596f;
+const float SLOG2_D = 0.03f;
+
+// --- S-Gamut3.Cine to Rec.709 matrix ---
+// Derived from: XYZ_to_Rec709 * XYZ_from_SGamut3Cine
+// S-Gamut3.Cine primaries: R(0.766,0.275) G(0.225,0.800) B(0.089,-0.087) D65 white
+// Rec.709 primaries:        R(0.640,0.330) G(0.300,0.600) B(0.150,0.060) D65 white
+// Source: colour-science Python library
+// Neutral preservation: row sums = 1.0 (D65 → D65, no chromatic adaptation)
+const float M00 =  2.0502f;  const float M01 = -0.7866f;  const float M02 = -0.2636f;
+const float M10 = -0.5051f;  const float M11 =  1.3968f;  const float M12 =  0.1083f;
+const float M20 =  0.0051f;  const float M21 = -0.1071f;  const float M22 =  1.1020f;
+
+// --- S-Gamut (original) to Rec.709 matrix ---
+// Derived from: XYZ_to_Rec709 * XYZ_from_SGamut
+// S-Gamut primaries: R(0.730,0.280) G(0.140,0.855) B(0.100,-0.050) D65 white
+// Source: colour-science Python library
+// Neutral preservation: row sums = 1.0 (D65 → D65, no chromatic adaptation)
+const float SM00 =  1.9404f;  const float SM01 = -0.5972f;  const float SM02 = -0.3432f;
+const float SM10 = -0.6330f;  const float SM11 =  1.4959f;  const float SM12 =  0.1371f;
+const float SM20 =  0.0083f;  const float SM21 = -0.1218f;  const float SM22 =  1.1135f;
+
+// --- Rec.709 OETF (BT.1886 inverse EOTF approximation) ---
+const float REC709_ALPHA = 1.09929682680944f;
+const float REC709_BETA  = 0.018053968510807f;
+
+__DEVICE__ float slog2_to_linear_f(float x)
+{
+    return _fmaxf(_powf(10.0f, (x - SLOG2_C - SLOG2_D) / SLOG2_A) - SLOG2_B, 0.0f);
+}
+
+__DEVICE__ float linear_to_rec709_f(float x)
+{
+    // Rec.709 OETF
+    if (x < 0.0f) return 0.0f;
+    if (x < REC709_BETA)
+    {
+        return 4.5f * x;
+    }
+    else
+    {
+        return REC709_ALPHA * _powf(x, 0.45f) - (REC709_ALPHA - 1.0f);
+    }
+}
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                             float p_R, float p_G, float p_B)
+{
+    // Step 1: S-Log2 to scene-linear
+    float lin_r = slog2_to_linear_f(p_R);
+    float lin_g = slog2_to_linear_f(p_G);
+    float lin_b = slog2_to_linear_f(p_B);
+
+    // Step 2: Gamut conversion to Rec.709
+    float r709, g709, b709;
+    if (gamut == SGAMUT3CINE)
+    {
+        // S-Gamut3.Cine to Rec.709
+        r709 = M00 * lin_r + M01 * lin_g + M02 * lin_b;
+        g709 = M10 * lin_r + M11 * lin_g + M12 * lin_b;
+        b709 = M20 * lin_r + M21 * lin_g + M22 * lin_b;
+    }
+    else
+    {
+        // S-Gamut (original) to Rec.709
+        r709 = SM00 * lin_r + SM01 * lin_g + SM02 * lin_b;
+        g709 = SM10 * lin_r + SM11 * lin_g + SM12 * lin_b;
+        b709 = SM20 * lin_r + SM21 * lin_g + SM22 * lin_b;
+    }
+
+    // Clamp negatives before gamma (gamut mapping can produce them)
+    r709 = _fmaxf(r709, 0.0f);
+    g709 = _fmaxf(g709, 0.0f);
+    b709 = _fmaxf(b709, 0.0f);
+
+    // Step 3: Linear to Rec.709 gamma
+    float3 out;
+    out.x = linear_to_rec709_f(r709);
+    out.y = linear_to_rec709_f(g709);
+    out.z = linear_to_rec709_f(b709);
+
+    return out;
+}

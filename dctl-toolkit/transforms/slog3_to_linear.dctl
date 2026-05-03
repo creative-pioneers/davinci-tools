@@ -1,0 +1,52 @@
+// slog3_to_linear.dctl
+// ---------------------------------------------------------------------------
+// Purpose:   Convert Sony S-Log3 signal to scene-linear light
+// Input:     Sony S-Log3 encoded (any S-Gamut variant)
+// Output:    Scene-linear (same gamut as input)
+// Reference: Sony S-Log3 Transfer Characteristics white paper (2016)
+//            "S-Log3 Transfer Characteristics" Sony Professional
+// Verified:  DaVinci Resolve 18.6
+// Note:      Sony S-Log3 specific. For other formats see clog3_to_linear.dctl, logc3_to_linear.dctl
+// ---------------------------------------------------------------------------
+//
+// Sony S-Log3 is a piecewise function:
+//   For signal values at/above the linear threshold (IRE >= 95/1023):
+//     linear = pow(10, (IRE * 1023 - 420) / 261.5) * 0.19 - 0.01
+//   For signal values below the linear threshold (IRE < 95/1023):
+//     linear = (IRE * 1023 - 95) * 0.01125 / (171.2102946929 - 95)
+//
+// This DCTL inverts that encoding to recover scene-linear values.
+
+// Sony S-Log3 constants (from Sony S-Log3 white paper 2016)
+const float SLOG3_CUT_IRE  = 0.092864f;       // 95/1023 = 0.092864 — boundary in IRE domain
+const float SLOG3_A        = 261.5f;           // log segment scale
+const float SLOG3_B        = 420.0f;           // log segment offset
+const float SLOG3_C        = 0.19f;            // scene-linear scale (0.18 + 0.01)
+const float SLOG3_D        = 0.01f;            // black offset
+const float SLOG3_LIN_CUT  = 0.01125f;         // scene-linear segment threshold
+
+__DEVICE__ float slog3_to_linear_f(float x)
+{
+    // Inverse of Sony S-Log3 OETF
+    // Input x is the S-Log3 IRE value (0-1 normalized)
+    if (x >= SLOG3_CUT_IRE)
+    {
+        // Log segment: linear = 10^((x*1023 - B) / A) * C - D
+        return _powf(10.0f, (x * 1023.0f - SLOG3_B) / SLOG3_A) * SLOG3_C - SLOG3_D;
+    }
+    else
+    {
+        // Linear segment: linear = (x*1023 - 95) * cut / (171.2102946929 - 95)
+        return (x * 1023.0f - 95.0f) * SLOG3_LIN_CUT / (171.2102946929f - 95.0f);
+    }
+}
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                             float p_R, float p_G, float p_B)
+{
+    float3 out;
+    out.x = slog3_to_linear_f(p_R);
+    out.y = slog3_to_linear_f(p_G);
+    out.z = slog3_to_linear_f(p_B);
+    return out;
+}

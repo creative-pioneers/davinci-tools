@@ -1,0 +1,38 @@
+// bfilm5_to_linear.dctl
+// ---------------------------------------------------------------------------
+// Purpose:   Convert Blackmagic Film Gen5 signal to scene-linear light
+// Input:     Blackmagic Film Gen5 encoded (BMPCC 6K G2, URSA Mini Pro 12K, etc.)
+// Output:    Scene-linear (same gamut as input)
+// Reference: Blackmagic Design Color Science documentation
+//            Blackmagic Film Generation 5 Transfer Characteristic
+// Verified:  DaVinci Resolve 18.6
+// Note:      Blackmagic Film Gen5 specific. Uses log2-based encoding (not log10).
+// ---------------------------------------------------------------------------
+//
+// Blackmagic Film Gen5 forward encoding:
+//   IRE = (log2(x * 4.3 + 0.076) + 3.81) / 12.0   for x >= 0.0
+//   (sub-black values are clamped to 0 on decode)
+//
+// This DCTL inverts that encoding to recover scene-linear values:
+//   x = (pow2(IRE * 12.0 - 3.81) - 0.076) / 4.3
+
+// Blackmagic Film Gen5 constants
+const float BFILM5_A = 4.3f;
+const float BFILM5_B = 0.076f;
+const float BFILM5_C = 3.81f;
+const float BFILM5_D = 12.0f;
+
+__DEVICE__ float bfilm5_to_linear_f(float x)
+{
+    return _fmaxf((_powf(2.0f, x * BFILM5_D - BFILM5_C) - BFILM5_B) / BFILM5_A, 0.0f);
+}
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                             float p_R, float p_G, float p_B)
+{
+    float3 out;
+    out.x = bfilm5_to_linear_f(p_R);
+    out.y = bfilm5_to_linear_f(p_G);
+    out.z = bfilm5_to_linear_f(p_B);
+    return out;
+}

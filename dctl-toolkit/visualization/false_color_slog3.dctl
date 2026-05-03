@@ -1,0 +1,58 @@
+// false_color_slog3.dctl
+// ---------------------------------------------------------------------------
+// Purpose:   False color exposure map tuned for Sony S-Log3 log values
+// Input:     Sony S-Log3 encoded
+// Output:    False color overlay with zone-based coloring
+// Reference: Sony S-Log3 IRE encoding values derived from forward transfer function
+// Verified:  DaVinci Resolve 18.6
+// Note:      Zone thresholds tuned to Sony S-Log3 IRE values.
+//            For a format-agnostic version with adjustable thresholds see false_color.dctl.
+//            For other formats see false_color_clog3.dctl, false_color_logc3.dctl, etc.
+// ---------------------------------------------------------------------------
+//
+// Zone scheme (S-Log3 IRE values, derived from forward encoding of reference linears):
+//   Purple  : < 0.030   - crushed / underexposed blacks      (linear ~0.005)
+//   Blue    : 0.030-0.076 - deep shadows                     (linear ~0.018)
+//   Teal    : 0.076-0.348 - shadow detail                    (linear ~0.09)
+//   Green   : 0.348-0.415 - middle grey (~18% grey = ~0.411) (linear ~0.18)
+//   Grey    : 0.415-0.480 - upper midtones                   (linear ~0.20)
+//   Pink    : 0.480-0.520 - skin tones / bright midtones     (linear ~0.56)
+//   Yellow  : 0.520-0.598 - highlights                       (linear ~1.0)
+//   Orange  : 0.598-0.729 - hot highlights (approaching clip)(linear ~3.5)
+//   Red     : > 0.729    - clipped                           (linear ~10.0)
+
+// Rec.709 luma weights
+const float LW_R = 0.2126f;
+const float LW_G = 0.7152f;
+const float LW_B = 0.0722f;
+
+__DEVICE__ float3 zone_color(float luma)
+{
+    // Zone thresholds and colors for S-Log3 IRE values
+    if (luma < 0.030f)
+        return make_float3(0.4f, 0.0f, 0.6f);   // Purple - crushed
+    else if (luma < 0.076f)
+        return make_float3(0.0f, 0.1f, 0.8f);   // Blue - shadows
+    else if (luma < 0.348f)
+        return make_float3(0.0f, 0.6f, 0.6f);   // Teal - shadow detail
+    else if (luma < 0.415f)
+        return make_float3(0.0f, 0.7f, 0.0f);   // Green - middle grey
+    else if (luma < 0.480f)
+        return make_float3(0.5f, 0.5f, 0.5f);   // Grey - upper midtones
+    else if (luma < 0.520f)
+        return make_float3(0.9f, 0.5f, 0.6f);   // Pink - skin tones
+    else if (luma < 0.598f)
+        return make_float3(0.9f, 0.9f, 0.0f);   // Yellow - highlights
+    else if (luma < 0.729f)
+        return make_float3(1.0f, 0.5f, 0.0f);   // Orange - hot highlights
+    else
+        return make_float3(1.0f, 0.0f, 0.0f);   // Red - clipped
+}
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                             float p_R, float p_G, float p_B)
+{
+    // Input is S-Log3: compute luma directly in log domain
+    float luma = LW_R * p_R + LW_G * p_G + LW_B * p_B;
+    return zone_color(luma);
+}

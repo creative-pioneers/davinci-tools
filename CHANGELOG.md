@@ -1,0 +1,42 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+
+## [Unreleased]
+
+### Added
+
+- `transforms/bfilm5_to_linear.dctl` — Blackmagic Film Gen5 linearization for BMPCC 6K G2, URSA Mini Pro 12K, and compatible cameras; log2-based encoding
+- `transforms/bfilm5_to_rec709.dctl` — full Blackmagic Film Gen5 to Rec.709 display pipeline
+- `visualization/false_color_bfilm5.dctl` — false color tuned for Blackmagic Film Gen5; middle grey zone centered at ~0.298 IRE (lower than log10-based formats due to log2 encoding)
+- `transforms/slog2_to_linear.dctl` — Sony S-Log2 linearization for A7S II, FS7, RX series, and compatible cameras
+- `transforms/slog2_to_rec709.dctl` — full S-Log2 to Rec.709 display pipeline with gamut selector combo box for S-Gamut3.Cine vs S-Gamut original
+- `visualization/false_color_slog2.dctl` — false color tuned for S-Log2; middle grey zone at ~0.360 IRE; wide blue shadow zone reflects S-Log2's compressed shadow encoding
+- `transforms/log3g10_to_linear.dctl` — RED Log3G10 / REDWideGamutRGB linearization for KOMODO, V-RAPTOR, and DSMC2 cameras; supports negative linear output for below-black RED encoded values
+- `transforms/log3g10_to_rec709.dctl` — full RED Log3G10 / REDWideGamutRGB to Rec.709 display pipeline
+- `transforms/vlogl_to_linear.dctl` — Panasonic V-Log L linearization for GH5, S1H, G9, BGH1, and S5 II
+- `transforms/vlogl_to_rec709.dctl` — full Panasonic V-Log L to Rec.709 display pipeline
+- `visualization/exposure_grid.dctl` — stop-relative false color; user declares a middle grey anchor and the tool colors zones per exposure stop above/below; format-agnostic alternative to fixed false color
+- `diagnostic/banding_viz.dctl` — detects horizontal and vertical banding artifacts via luma variance in a 5-pixel neighborhood; requires Resolve Studio (multi-pixel DCTL)
+- `grading/luma_key.dctl` — luma-windowed lift/gain correction with soft edges; format-agnostic, useful in log spaces where HSL qualifiers key unreliably
+- `visualization/false_color.dctl` — format-agnostic false color with nine fully adjustable zone threshold sliders; works on any log encoding or display-referred signal
+- `transforms/slog3_to_linear.dctl` — Sony S-Log3 linearization for FX3, FX6, FX9, VENICE, A7S III footage
+- `transforms/slog3_to_rec709.dctl` — full S-Log3 / S-Gamut3.Cine to Rec.709 display pipeline
+- `visualization/false_color_slog3.dctl` — exposure zone map with thresholds tuned to S-Log3 IRE encoding values
+- `transforms/logc3_to_linear.dctl` — ARRI LogC3 linearization for AMIRA, ALEXA Mini, Mini LF, and compatible cameras at EI 800
+- `transforms/logc3_to_rec709.dctl` — full LogC3 / ARRI Wide Gamut 3 to Rec.709 display pipeline
+- `visualization/false_color_logc3.dctl` — exposure zone map with thresholds tuned to LogC3 IRE encoding values at EI 800
+- `diagnostic/channel_isolation.dctl` — view R, G, or B channels as greyscale, or split the frame into a horizontal R|G|B triptych for per-channel diagnostics
+- `visualization/split_tone.dctl` — shadow/highlight hue shift with configurable hue, saturation, crossover point, and crossover width
+
+### Changed
+
+- Removed Canon C-Log 3 / R5C-specific framing from README files; project is now documented as a multi-format toolkit supporting Canon, Sony, and ARRI log formats
+
+### Fixed
+
+- `install.sh` — added APPDATA guard to prevent path errors on Windows/MSYS environments where the variable may be unset
+- `visualization/split_tone.dctl` — added NaN guard in `smoothstep_f` to handle degenerate input when `crossover_width` is zero
+- `.gitignore` — added secrets and credentials exclusion patterns to prevent accidental credential commits
