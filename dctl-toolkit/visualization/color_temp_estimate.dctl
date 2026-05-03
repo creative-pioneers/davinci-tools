@@ -1,0 +1,118 @@
+// color_temp_estimate.dctl
+// ---------------------------------------------------------------------------
+// Purpose:   Visualize per-pixel warm/cool colour temperature bias
+// Input:     Any colour space (works best on Rec.709 or display-referred signals)
+// Output:    Original image tinted by warm/cool bias, or bias map overlay
+// Verified:  DaVinci Resolve 18.6
+// Note:      DCTL cannot accumulate global frame statistics — this tool shows the
+//            spatial distribution of R/B imbalance across the frame, not a single
+//            colour temperature readout. Useful for detecting mixed lighting and
+//            shot-to-shot consistency checking.
+//            Place after a log-to-Rec.709 transform for most meaningful results.
+// ---------------------------------------------------------------------------
+//
+// Parameters:
+//   Target R-B Balance  : Expected R/B ratio offset at neutral (0 = balanced)
+//                         Positive shifts the neutral point toward warm, negative toward cool.
+//   Sensitivity         : Amplifies the bias signal; higher = more reactive to small shifts.
+//   Min Luma            : Pixels below this luma value are passed through unchanged
+//                         (avoids noise amplification in dark areas).
+//   Show Mode           : Tint Overlay — blends warm/cool tint onto the original image.
+//                         Bias Map — shows a pure colour distribution map of the frame.
+//
+// Tint Overlay:
+//   Warm pixels blend toward amber (1.0, 0.6, 0.2); cool pixels toward blue (0.2, 0.5, 1.0).
+//   Blend strength = bias_strength * 0.5 so the original is always visible underneath.
+//
+// Bias Map:
+//   Very warm  (rb_bias >  threshold)          : orange     (1.0, 0.5, 0.0)
+//   Warm       (rb_bias in [thr/2, thr])       : warm white (1.0, 0.9, 0.7)
+//   Neutral    (rb_bias in [-thr/2, +thr/2])   : grey       (0.7, 0.7, 0.7)
+//   Cool       (rb_bias in [-thr, -thr/2])     : cool white (0.7, 0.8, 1.0)
+//   Very cool  (rb_bias < -threshold)          : blue       (0.0, 0.4, 1.0)
+
+DEFINE_UI_PARAMS(target_balance, Target R-B Balance, DCTLUI_SLIDER_FLOAT, 0.0f, -0.5f, 0.5f, 0.01f)
+DEFINE_UI_PARAMS(sensitivity,    Sensitivity,         DCTLUI_SLIDER_FLOAT, 2.0f,  0.5f,  5.0f, 0.1f)
+DEFINE_UI_PARAMS(min_luma,       Min Luma,            DCTLUI_SLIDER_FLOAT, 0.05f, 0.0f,  0.5f, 0.01f)
+DEFINE_UI_PARAMS(show_mode,      Show Mode,           DCTLUI_COMBO_BOX, 0, {MODE_TINT, MODE_MAP}, {Tint Overlay, Bias Map})
+
+// Rec.709 luma weights
+const float LW_R = 0.2126f;
+const float LW_G = 0.7152f;
+const float LW_B = 0.0722f;
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                             float p_R, float p_G, float p_B)
+{
+    float3 out;
+    out.x = p_R;
+    out.y = p_G;
+    out.z = p_B;
+
+    // Compute luma — used to skip dark pixels and to normalise the R/B ratio
+    float luma = LW_R * p_R + LW_G * p_G + LW_B * p_B;
+
+    // Skip pixels below the minimum luma threshold (avoids shadow noise)
+    if (luma < min_luma)
+    {
+        return out;
+    }
+
+    // R/B bias normalised by luma, offset by the declared neutral balance.
+    // Positive = warm (red dominant), negative = cool (blue dominant).
+    float rb_bias = (p_R - p_B) / (luma + 0.001f) - target_balance;
+
+    // Clamp bias strength to [0, 1] for blending
+    float bias_strength = _fminf(_fabs(rb_bias) * sensitivity, 1.0f);
+
+    int warm = (rb_bias > 0.0f) ? 1 : 0;
+
+    if (show_mode == MODE_TINT)
+    {
+        // Tint overlay: blend original toward warm amber or cool blue
+        float3 tint_color;
+        if (warm)
+        {
+            tint_color = make_float3(1.0f, 0.6f, 0.2f);  // amber
+        }
+        else
+        {
+            tint_color = make_float3(0.2f, 0.5f, 1.0f);  // blue
+        }
+
+        float blend = bias_strength * 0.5f;
+        out.x = p_R + (tint_color.x - p_R) * blend;
+        out.y = p_G + (tint_color.y - p_G) * blend;
+        out.z = p_B + (tint_color.z - p_B) * blend;
+    }
+    else
+    {
+        // Bias map: show pure colour temperature distribution
+        // Threshold separating "warm/cool" from "very warm/very cool"
+        float threshold = 0.1f / sensitivity;
+        float half_thr  = threshold * 0.5f;
+
+        if (rb_bias > threshold)
+        {
+            out = make_float3(1.0f, 0.5f, 0.0f);   // very warm — orange
+        }
+        else if (rb_bias > half_thr)
+        {
+            out = make_float3(1.0f, 0.9f, 0.7f);   // warm — warm white
+        }
+        else if (rb_bias > -half_thr)
+        {
+            out = make_float3(0.7f, 0.7f, 0.7f);   // neutral — grey
+        }
+        else if (rb_bias > -threshold)
+        {
+            out = make_float3(0.7f, 0.8f, 1.0f);   // cool — cool white
+        }
+        else
+        {
+            out = make_float3(0.0f, 0.4f, 1.0f);   // very cool — blue
+        }
+    }
+
+    return out;
+}

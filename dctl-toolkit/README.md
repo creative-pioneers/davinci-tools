@@ -42,6 +42,7 @@ The following tools work on any input signal regardless of camera system or log 
 - `false_color` — exposure zone map with adjustable thresholds
 - `channel_isolation` — per-channel greyscale or R/G/B triptych
 - `split_tone` — shadow/highlight hue shift with smooth crossover
+- `color_temp_estimate` — warm/cool R/B bias visualizer for mixed lighting detection
 
 ### Transforms
 
@@ -132,6 +133,20 @@ Full pipeline from Panasonic V-Log L to Rec.709 display. Applies V-Log L lineari
 
 - **Input:** Panasonic V-Log L, V-Gamut
 - **Output:** Rec.709 gamma-encoded
+
+#### `logc4_to_linear.dctl`
+Converts ARRI LogC4 signal to scene-linear light. Implements the inverse of ARRI's log2-based LogC4 transfer function. ALEXA 35 only — for ALEXA Mini / Mini LF / Amira use `logc3_to_linear.dctl`. No EI dependence.
+
+- **Input:** ARRI LogC4 encoded (ARRI Wide Gamut 4)
+- **Output:** Scene-linear (same gamut as input)
+- **Reference:** ARRI Science — "ALEXA 35 LogC4 Transfer Characteristic"
+
+#### `logc4_to_rec709.dctl`
+Full pipeline from ARRI LogC4 / ARRI Wide Gamut 4 to Rec.709 display. Applies LogC4 linearization, AWG4 to Rec.709 3x3 matrix, and Rec.709 OETF.
+
+- **Input:** ARRI LogC4, ARRI Wide Gamut 4
+- **Output:** Rec.709 gamma-encoded
+- **Cameras:** ALEXA 35
 
 ### Visualization
 
@@ -241,11 +256,51 @@ False color exposure zone map with thresholds tuned for Sony S-Log2 IRE encoding
 
 - **Input:** Sony S-Log2 encoded
 
+#### `false_color_logc4.dctl`
+False color exposure zone map with thresholds derived from ARRI LogC4 IRE encoding values (ALEXA 35).
+
+| Color | Zone | LogC4 IRE |
+|-------|------|-----------|
+| Purple | Crushed blacks | < 0.037 |
+| Blue | Deep shadows | 0.037 - 0.132 |
+| Teal | Shadow detail | 0.132 - 0.225 |
+| Green | Middle grey (18%) | 0.225 - 0.285 |
+| Grey | Upper midtones | 0.285 - 0.421 |
+| Pink | Skin tones | 0.421 - 0.526 |
+| Yellow | Highlights | 0.526 - 0.634 |
+| Orange | Hot highlights | 0.634 - 0.779 |
+| Red | Clipped | > 0.779 |
+
+- **Input:** ARRI LogC4 encoded (ALEXA 35 only)
+
+#### `false_color_vlogl.dctl`
+False color exposure zone map with thresholds tuned for Panasonic V-Log L IRE encoding values.
+
+| Color | Zone | V-Log L IRE |
+|-------|------|-------------|
+| Purple | Crushed blacks | < 0.153 |
+| Blue | Deep shadows | 0.153 - 0.218 |
+| Teal | Shadow detail | 0.218 - 0.355 |
+| Green | Middle grey (18%) | 0.355 - 0.435 |
+| Grey | Upper midtones | 0.435 - 0.499 |
+| Pink | Skin tones | 0.499 - 0.539 |
+| Yellow | Highlights | 0.539 - 0.599 |
+| Orange | Hot highlights | 0.599 - 0.730 |
+| Red | Clipped | > 0.730 |
+
+- **Input:** Panasonic V-Log L encoded
+
 #### `exposure_grid.dctl`
 Stop-relative false color overlay. The user sets a middle grey anchor value for any log format; the tool computes zone boundaries at each full stop above and below that anchor and applies the standard color scheme. Format-agnostic alternative to the camera-specific false color tools — works on any log encoding by dialing in the correct middle grey IRE.
 
 - **UI Params:** Middle Grey Anchor (0.0 – 1.0)
 - **Input:** Any log-encoded signal
+
+#### `color_temp_estimate.dctl`
+Visualizes per-pixel warm/cool colour temperature bias across the frame. Computes R/B imbalance normalized by luma and renders it as either a tint overlay (warm amber / cool blue blended onto the original image) or a 5-zone bias map (very warm / warm / neutral / cool / very cool). Useful for detecting mixed lighting, shot-to-shot consistency checking, and WB verification before grading.
+
+- **UI Params:** Target R-B Balance, Sensitivity, Min Luma, Show Mode (Tint Overlay / Bias Map)
+- **Input:** Any signal (works best on Rec.709 or display-referred signals placed after a log transform)
 
 #### `split_tone.dctl`
 Applies independent hue and saturation shifts to shadows and highlights with a smooth crossover region. Place on a node after any log-to-display transform for predictable results.
@@ -311,15 +366,20 @@ dctl-toolkit/
 │   ├── log3g10_to_linear.dctl
 │   ├── log3g10_to_rec709.dctl
 │   ├── vlogl_to_linear.dctl
-│   └── vlogl_to_rec709.dctl
+│   ├── vlogl_to_rec709.dctl
+│   ├── logc4_to_linear.dctl
+│   └── logc4_to_rec709.dctl
 ├── visualization/
 │   ├── false_color_clog3.dctl
 │   ├── false_color_slog3.dctl
 │   ├── false_color_logc3.dctl
 │   ├── false_color_bfilm5.dctl
 │   ├── false_color_slog2.dctl
+│   ├── false_color_logc4.dctl
+│   ├── false_color_vlogl.dctl
 │   ├── false_color.dctl
 │   ├── exposure_grid.dctl
+│   ├── color_temp_estimate.dctl
 │   ├── zebras.dctl
 │   ├── focus_peaking.dctl
 │   ├── skin_tone_indicator.dctl

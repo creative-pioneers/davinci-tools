@@ -1,0 +1,62 @@
+// false_color_logc4.dctl
+// ---------------------------------------------------------------------------
+// Purpose:   False color exposure map tuned for ARRI LogC4 log values (ALEXA 35)
+// Input:     ARRI LogC4 encoded
+// Output:    False color overlay with zone-based coloring
+// Reference: Zone thresholds derived from forward encoding of semantic linear values
+//            through ARRI LogC4 transfer characteristic
+// Verified:  DaVinci Resolve 18.6
+// Note:      Zone thresholds tuned to ARRI LogC4 IRE values (ALEXA 35 only).
+//            LogC4 encodes the sensor's full linear range; x=0.018 normalised sensor
+//            value = middle grey (~18% linear reflectance at base ISO). Zones cover
+//            the full sensor range from black (IRE 0) to near-white (IRE ~0.889).
+//            For ALEXA Mini/Mini LF/Amira (LogC3) see false_color_logc3.dctl.
+//            For a format-agnostic version with adjustable thresholds see false_color.dctl.
+// ---------------------------------------------------------------------------
+//
+// Zone scheme (LogC4 IRE values, derived from forward encoding of reference linears):
+//   Purple  : < 0.037   - crushed / underexposed blacks      (linear ~0.001)
+//   Blue    : 0.037-0.132 - deep shadows                     (linear ~0.005)
+//   Teal    : 0.132-0.225 - shadow detail                    (linear ~0.010)
+//   Green   : 0.225-0.285 - middle grey (~18% grey = ~0.276) (linear ~0.018)
+//   Grey    : 0.285-0.421 - upper midtones                   (linear ~0.050)
+//   Pink    : 0.421-0.526 - skin tones / bright midtones     (linear ~0.100)
+//   Yellow  : 0.526-0.634 - highlights                       (linear ~0.200)
+//   Orange  : 0.634-0.779 - hot highlights (approaching clip)(linear ~0.500)
+//   Red     : > 0.779    - clipped                           (linear >0.500)
+
+// Rec.709 luma weights
+const float LW_R = 0.2126f;
+const float LW_G = 0.7152f;
+const float LW_B = 0.0722f;
+
+__DEVICE__ float3 zone_color(float luma)
+{
+    // Zone thresholds and colors for LogC4 IRE values
+    if (luma < 0.037f)
+        return make_float3(0.4f, 0.0f, 0.6f);   // Purple - crushed
+    else if (luma < 0.132f)
+        return make_float3(0.0f, 0.1f, 0.8f);   // Blue - deep shadows
+    else if (luma < 0.225f)
+        return make_float3(0.0f, 0.6f, 0.6f);   // Teal - shadow detail
+    else if (luma < 0.285f)
+        return make_float3(0.0f, 0.7f, 0.0f);   // Green - middle grey (~0.276)
+    else if (luma < 0.421f)
+        return make_float3(0.5f, 0.5f, 0.5f);   // Grey - upper midtones
+    else if (luma < 0.526f)
+        return make_float3(0.9f, 0.5f, 0.6f);   // Pink - skin tones
+    else if (luma < 0.634f)
+        return make_float3(0.9f, 0.9f, 0.0f);   // Yellow - highlights
+    else if (luma < 0.779f)
+        return make_float3(1.0f, 0.5f, 0.0f);   // Orange - hot highlights
+    else
+        return make_float3(1.0f, 0.0f, 0.0f);   // Red - clipped
+}
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                             float p_R, float p_G, float p_B)
+{
+    // Input is LogC4: compute luma directly in log domain
+    float luma = LW_R * p_R + LW_G * p_G + LW_B * p_B;
+    return zone_color(luma);
+}

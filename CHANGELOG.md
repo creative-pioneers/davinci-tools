@@ -30,6 +30,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `visualization/false_color_logc3.dctl` — exposure zone map with thresholds tuned to LogC3 IRE encoding values at EI 800
 - `diagnostic/channel_isolation.dctl` — view R, G, or B channels as greyscale, or split the frame into a horizontal R|G|B triptych for per-channel diagnostics
 - `visualization/split_tone.dctl` — shadow/highlight hue shift with configurable hue, saturation, crossover point, and crossover width
+- `transforms/logc4_to_linear.dctl` — ARRI LogC4 linearization for ALEXA 35; log2-based encoding with no EI dependence
+- `transforms/logc4_to_rec709.dctl` — full ARRI LogC4 / ARRI Wide Gamut 4 to Rec.709 display pipeline for ALEXA 35 footage
+- `visualization/false_color_logc4.dctl` — false color tuned for ARRI LogC4 IRE values; middle grey zone centered at ~0.276 IRE (ALEXA 35 only)
+- `visualization/false_color_vlogl.dctl` — false color tuned for Panasonic V-Log L; middle grey zone centered at ~0.423 IRE
+- `visualization/color_temp_estimate.dctl` — per-pixel warm/cool colour temperature bias visualizer; shows spatial R/B imbalance distribution across the frame in tint overlay or 5-zone bias map modes
 
 ### Changed
 

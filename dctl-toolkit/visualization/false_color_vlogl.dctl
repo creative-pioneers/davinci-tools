@@ -1,0 +1,61 @@
+// false_color_vlogl.dctl
+// ---------------------------------------------------------------------------
+// Purpose:   False color exposure map tuned for Panasonic V-Log L log values
+// Input:     Panasonic V-Log L encoded
+// Output:    False color overlay with zone-based coloring
+// Reference: Zone thresholds derived from forward encoding of semantic linear values
+//            through Panasonic V-Log L transfer characteristic
+// Verified:  DaVinci Resolve 18.6
+// Note:      Zone thresholds tuned to Panasonic V-Log L IRE values.
+//            Middle grey (18% linear) encodes to approximately 0.423 in V-Log L.
+//            V-Log L uses a piecewise function: log10 for x >= 0.01, linear below.
+//            For a format-agnostic version with adjustable thresholds see false_color.dctl.
+//            For other formats see false_color_logc3.dctl, false_color_slog3.dctl, etc.
+// ---------------------------------------------------------------------------
+//
+// Zone scheme (V-Log L IRE values, derived from forward encoding of reference linears):
+//   Purple  : < 0.153   - crushed / underexposed blacks      (linear ~0.005)
+//   Blue    : 0.153-0.218 - deep shadows                     (linear ~0.018)
+//   Teal    : 0.218-0.355 - shadow detail                    (linear ~0.090)
+//   Green   : 0.355-0.435 - middle grey (~18% grey = ~0.423) (linear ~0.180)
+//   Grey    : 0.435-0.499 - upper midtones                   (linear ~0.380)
+//   Pink    : 0.499-0.539 - skin tones / bright midtones     (linear ~0.560)
+//   Yellow  : 0.539-0.599 - highlights                       (linear ~1.000)
+//   Orange  : 0.599-0.730 - hot highlights (approaching clip)(linear ~3.500)
+//   Red     : > 0.730    - clipped                           (linear >3.500)
+
+// Rec.709 luma weights
+const float LW_R = 0.2126f;
+const float LW_G = 0.7152f;
+const float LW_B = 0.0722f;
+
+__DEVICE__ float3 zone_color(float luma)
+{
+    // Zone thresholds and colors for V-Log L IRE values
+    if (luma < 0.153f)
+        return make_float3(0.4f, 0.0f, 0.6f);   // Purple - crushed
+    else if (luma < 0.218f)
+        return make_float3(0.0f, 0.1f, 0.8f);   // Blue - deep shadows
+    else if (luma < 0.355f)
+        return make_float3(0.0f, 0.6f, 0.6f);   // Teal - shadow detail
+    else if (luma < 0.435f)
+        return make_float3(0.0f, 0.7f, 0.0f);   // Green - middle grey (~0.423)
+    else if (luma < 0.499f)
+        return make_float3(0.5f, 0.5f, 0.5f);   // Grey - upper midtones
+    else if (luma < 0.539f)
+        return make_float3(0.9f, 0.5f, 0.6f);   // Pink - skin tones
+    else if (luma < 0.599f)
+        return make_float3(0.9f, 0.9f, 0.0f);   // Yellow - highlights
+    else if (luma < 0.730f)
+        return make_float3(1.0f, 0.5f, 0.0f);   // Orange - hot highlights
+    else
+        return make_float3(1.0f, 0.0f, 0.0f);   // Red - clipped
+}
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                             float p_R, float p_G, float p_B)
+{
+    // Input is V-Log L: compute luma directly in log domain
+    float luma = LW_R * p_R + LW_G * p_G + LW_B * p_B;
+    return zone_color(luma);
+}
