@@ -1,0 +1,153 @@
+// format_reference_strip.dctl
+// ---------------------------------------------------------------------------
+// Purpose:   Overlay a zone-coloured reference strip on the frame edge showing
+//            IRE-to-zone mapping for the selected log format
+// Input:     Any signal (strip is a static legend; image passes through unchanged)
+// Output:    Original image with reference strip on selected edge
+// Verified:  DaVinci Resolve 18.6
+// Note:      The strip maps IRE 0.0 (bottom) to 1.0 (top) using the selected
+//            format's zone colour scheme. White tick marks show the green zone
+//            boundaries (middle grey zone). Compare where your waveform sits
+//            against the strip to identify the format and verify exposure zones.
+//            Log3G10 is omitted — its middle grey at IRE ~0.95 compresses all
+//            zones into an unusable range.
+// ---------------------------------------------------------------------------
+//
+// Zone colour scheme (9 zones, shared by all formats):
+//   Purple  : below T1  — crushed / underexposed blacks
+//   Blue    : T1 – T2   — deep shadows
+//   Teal    : T2 – T3   — shadow detail
+//   Green   : T3 – T4   — middle grey  *** tick marks here ***
+//   Grey    : T4 – T5   — upper midtones
+//   Pink    : T5 – T6   — skin tones
+//   Yellow  : T6 – T7   — highlights
+//   Orange  : T7 – T8   — hot highlights
+//   Red     : above T8  — clipped / near clip
+
+DEFINE_UI_PARAMS(format,      Format,      DCTLUI_COMBO_BOX, 0, {CLOG3, SLOG3, SLOG2, LOGC3, LOGC4, BFILM5, VLOGL, REC709D}, {C-Log 3, S-Log3, S-Log2, LogC3 EI800, LogC4 (A35), BM Film Gen5, V-Log L, Rec.709})
+DEFINE_UI_PARAMS(strip_width, Strip Width, DCTLUI_SLIDER_FLOAT, 0.04f, 0.01f, 0.12f, 0.005f)
+DEFINE_UI_PARAMS(strip_side,  Strip Side,  DCTLUI_COMBO_BOX, 1, {SIDE_LEFT, SIDE_RIGHT}, {Left, Right})
+
+// ---------------------------------------------------------------------------
+// Zone threshold constants — 8 boundaries produce 9 zones per format
+// ---------------------------------------------------------------------------
+
+// Canon C-Log 3
+const float CLOG3_T1=0.100f, CLOG3_T2=0.250f, CLOG3_T3=0.350f, CLOG3_T4=0.430f;
+const float CLOG3_T5=0.500f, CLOG3_T6=0.580f, CLOG3_T7=0.750f, CLOG3_T8=0.950f;
+
+// Sony S-Log3
+const float SLOG3_T1=0.030f, SLOG3_T2=0.076f, SLOG3_T3=0.348f, SLOG3_T4=0.415f;
+const float SLOG3_T5=0.480f, SLOG3_T6=0.520f, SLOG3_T7=0.598f, SLOG3_T8=0.729f;
+
+// Sony S-Log2
+const float SLOG2_T1=0.090f, SLOG2_T2=0.230f, SLOG2_T3=0.330f, SLOG2_T4=0.390f;
+const float SLOG2_T5=0.455f, SLOG2_T6=0.510f, SLOG2_T7=0.636f, SLOG2_T8=0.800f;
+
+// ARRI LogC3 EI800
+const float LOGC3_T1=0.123f, LOGC3_T2=0.218f, LOGC3_T3=0.345f, LOGC3_T4=0.395f;
+const float LOGC3_T5=0.453f, LOGC3_T6=0.491f, LOGC3_T7=0.553f, LOGC3_T8=0.683f;
+
+// ARRI LogC4 (Alexa 35)
+const float LOGC4_T1=0.037f, LOGC4_T2=0.132f, LOGC4_T3=0.225f, LOGC4_T4=0.285f;
+const float LOGC4_T5=0.421f, LOGC4_T6=0.526f, LOGC4_T7=0.634f, LOGC4_T8=0.779f;
+
+// Blackmagic Film Gen 5
+const float BFILM5_T1=0.040f, BFILM5_T2=0.180f, BFILM5_T3=0.270f, BFILM5_T4=0.330f;
+const float BFILM5_T5=0.420f, BFILM5_T6=0.520f, BFILM5_T7=0.700f, BFILM5_T8=0.900f;
+
+// Panasonic V-Log L
+const float VLOGL_T1=0.153f, VLOGL_T2=0.218f, VLOGL_T3=0.355f, VLOGL_T4=0.435f;
+const float VLOGL_T5=0.499f, VLOGL_T6=0.539f, VLOGL_T7=0.599f, VLOGL_T8=0.730f;
+
+// Rec.709 display reference
+const float REC709D_T1=0.020f, REC709D_T2=0.090f, REC709D_T3=0.360f, REC709D_T4=0.460f;
+const float REC709D_T5=0.600f, REC709D_T6=0.720f, REC709D_T7=0.830f, REC709D_T8=0.960f;
+
+// ---------------------------------------------------------------------------
+// Shared 9-zone colour lookup — same colour scheme as all false_color tools
+// ---------------------------------------------------------------------------
+__DEVICE__ float3 zone_color_from_thresholds(float luma,
+    float t1, float t2, float t3, float t4,
+    float t5, float t6, float t7, float t8)
+{
+    if      (luma < t1) return make_float3(0.4f, 0.0f, 0.6f);   // Purple  — crushed
+    else if (luma < t2) return make_float3(0.0f, 0.1f, 0.8f);   // Blue    — deep shadows
+    else if (luma < t3) return make_float3(0.0f, 0.6f, 0.6f);   // Teal    — shadow detail
+    else if (luma < t4) return make_float3(0.0f, 0.7f, 0.0f);   // Green   — middle grey
+    else if (luma < t5) return make_float3(0.5f, 0.5f, 0.5f);   // Grey    — upper midtones
+    else if (luma < t6) return make_float3(0.9f, 0.5f, 0.6f);   // Pink    — skin tones
+    else if (luma < t7) return make_float3(0.9f, 0.9f, 0.0f);   // Yellow  — highlights
+    else if (luma < t8) return make_float3(1.0f, 0.5f, 0.0f);   // Orange  — hot highlights
+    else                return make_float3(1.0f, 0.0f, 0.0f);   // Red     — clipped
+}
+
+// Dispatch to the correct format's thresholds
+__DEVICE__ float3 get_zone_color(float luma, int fmt)
+{
+    if      (fmt == CLOG3)  return zone_color_from_thresholds(luma, CLOG3_T1,  CLOG3_T2,  CLOG3_T3,  CLOG3_T4,  CLOG3_T5,  CLOG3_T6,  CLOG3_T7,  CLOG3_T8);
+    else if (fmt == SLOG3)  return zone_color_from_thresholds(luma, SLOG3_T1,  SLOG3_T2,  SLOG3_T3,  SLOG3_T4,  SLOG3_T5,  SLOG3_T6,  SLOG3_T7,  SLOG3_T8);
+    else if (fmt == SLOG2)  return zone_color_from_thresholds(luma, SLOG2_T1,  SLOG2_T2,  SLOG2_T3,  SLOG2_T4,  SLOG2_T5,  SLOG2_T6,  SLOG2_T7,  SLOG2_T8);
+    else if (fmt == LOGC3)  return zone_color_from_thresholds(luma, LOGC3_T1,  LOGC3_T2,  LOGC3_T3,  LOGC3_T4,  LOGC3_T5,  LOGC3_T6,  LOGC3_T7,  LOGC3_T8);
+    else if (fmt == LOGC4)  return zone_color_from_thresholds(luma, LOGC4_T1,  LOGC4_T2,  LOGC4_T3,  LOGC4_T4,  LOGC4_T5,  LOGC4_T6,  LOGC4_T7,  LOGC4_T8);
+    else if (fmt == BFILM5) return zone_color_from_thresholds(luma, BFILM5_T1, BFILM5_T2, BFILM5_T3, BFILM5_T4, BFILM5_T5, BFILM5_T6, BFILM5_T7, BFILM5_T8);
+    else if (fmt == VLOGL)  return zone_color_from_thresholds(luma, VLOGL_T1,  VLOGL_T2,  VLOGL_T3,  VLOGL_T4,  VLOGL_T5,  VLOGL_T6,  VLOGL_T7,  VLOGL_T8);
+    else                    return zone_color_from_thresholds(luma, REC709D_T1, REC709D_T2, REC709D_T3, REC709D_T4, REC709D_T5, REC709D_T6, REC709D_T7, REC709D_T8);
+}
+
+// Return lower boundary of green (middle grey) zone for the selected format
+__DEVICE__ float get_green_lo(int fmt)
+{
+    if      (fmt == CLOG3)  return CLOG3_T3;
+    else if (fmt == SLOG3)  return SLOG3_T3;
+    else if (fmt == SLOG2)  return SLOG2_T3;
+    else if (fmt == LOGC3)  return LOGC3_T3;
+    else if (fmt == LOGC4)  return LOGC4_T3;
+    else if (fmt == BFILM5) return BFILM5_T3;
+    else if (fmt == VLOGL)  return VLOGL_T3;
+    else                    return REC709D_T3;
+}
+
+// Return upper boundary of green (middle grey) zone for the selected format
+__DEVICE__ float get_green_hi(int fmt)
+{
+    if      (fmt == CLOG3)  return CLOG3_T4;
+    else if (fmt == SLOG3)  return SLOG3_T4;
+    else if (fmt == SLOG2)  return SLOG2_T4;
+    else if (fmt == LOGC3)  return LOGC3_T4;
+    else if (fmt == LOGC4)  return LOGC4_T4;
+    else if (fmt == BFILM5) return BFILM5_T4;
+    else if (fmt == VLOGL)  return VLOGL_T4;
+    else                    return REC709D_T4;
+}
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                             float p_R, float p_G, float p_B)
+{
+    float norm_x   = (float)p_X / (float)p_Width;
+    float strip_edge = (strip_side == SIDE_LEFT) ? strip_width : (1.0f - strip_width);
+    int   in_strip = (strip_side == SIDE_LEFT)
+                         ? (norm_x < strip_width ? 1 : 0)
+                         : (norm_x > (1.0f - strip_width) ? 1 : 0);
+
+    // White dividing line at strip edge (1.5 px wide)
+    float edge_half = 1.5f / (float)p_Width;
+    if (_fabs(norm_x - strip_edge) < edge_half)
+        return make_float3(1.0f, 1.0f, 1.0f);
+
+    // Outside strip — pass through original
+    if (!in_strip)
+        return make_float3(p_R, p_G, p_B);
+
+    // Inside strip: map vertical position to IRE (top = 1.0, bottom = 0.0)
+    float ref_ire = 1.0f - (float)p_Y / (float)p_Height;
+
+    // White tick marks at green zone lo and hi boundaries (2 px wide)
+    float tick_half = 2.0f / (float)p_Height;
+    float green_lo = get_green_lo(format);
+    float green_hi = get_green_hi(format);
+    if (_fabs(ref_ire - green_lo) < tick_half || _fabs(ref_ire - green_hi) < tick_half)
+        return make_float3(1.0f, 1.0f, 1.0f);
+
+    return get_zone_color(ref_ire, format);
+}

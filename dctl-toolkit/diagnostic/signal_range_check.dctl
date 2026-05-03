@@ -1,0 +1,80 @@
+// signal_range_check.dctl
+// ---------------------------------------------------------------------------
+// Purpose:   Detect and visualize signal range issues — illegal negatives,
+//            sub-black pedestal, super-whites, and hard clips
+// Input:     Any signal (most useful as the first node in the pipeline)
+// Output:    Original image with out-of-range regions colour-coded
+// Verified:  DaVinci Resolve 18.6
+// Note:      Per-channel checks — any channel violating a threshold triggers
+//            the flag. Place as the first node to catch legal vs full range
+//            confusion, lifted blacks, or clipped highlights before grading.
+//
+// Zone scheme (per-channel):
+//   Red     : Any channel > 1.0                     — hard clipped
+//   Magenta : Any channel < 0.0                     — illegal negative
+//   Cyan    : Any channel in (hi_thresh, 1.0)       — approaching clip
+//   Yellow  : Luma in (0.0, LEGAL_BLACK)            — sub-black pedestal
+//             (black floor at ~0.0627 suggests legal-range footage loaded as full-range)
+//   Pass    : Everything in normal range
+//
+// Legal range reference:
+//   0.0627 = 16/255  (legal black, 8-bit)
+//   0.9216 = 235/255 (legal white, 8-bit) — default hi_thresh
+// ---------------------------------------------------------------------------
+
+DEFINE_UI_PARAMS(hi_thresh, Highlight Warning, DCTLUI_SLIDER_FLOAT, 0.9216f, 0.5f, 1.0f, 0.01f)
+DEFINE_UI_PARAMS(view_mode, View Mode,         DCTLUI_COMBO_BOX, 0, {OVERLAY, ISOLATED}, {Overlay, Isolated})
+DEFINE_UI_PARAMS(opacity,   Overlay Opacity,   DCTLUI_SLIDER_FLOAT, 0.8f, 0.1f, 1.0f, 0.05f)
+
+// Rec.709 luma weights
+const float LW_R = 0.2126f;
+const float LW_G = 0.7152f;
+const float LW_B = 0.0722f;
+
+// Legal range reference: 16/255 ~ 0.0627
+const float LEGAL_BLACK = 0.0627f;
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                             float p_R, float p_G, float p_B)
+{
+    float luma = LW_R * p_R + LW_G * p_G + LW_B * p_B;
+
+    // Detect violations in priority order
+    int has_hard_clip   = (p_R > 1.0f || p_G > 1.0f || p_B > 1.0f) ? 1 : 0;
+    int has_negative    = (p_R < 0.0f || p_G < 0.0f || p_B < 0.0f) ? 1 : 0;
+    int has_superwhite  = (!has_hard_clip && (p_R > hi_thresh || p_G > hi_thresh || p_B > hi_thresh)) ? 1 : 0;
+    int has_subblack    = (!has_negative && !has_hard_clip && !has_superwhite &&
+                           luma > 0.0f && luma < LEGAL_BLACK) ? 1 : 0;
+
+    int flagged = (has_hard_clip || has_negative || has_superwhite || has_subblack) ? 1 : 0;
+
+    // If not flagged, return original or black depending on view mode
+    if (!flagged)
+    {
+        if (view_mode == ISOLATED)
+            return make_float3(0.0f, 0.0f, 0.0f);
+        else
+            return make_float3(p_R, p_G, p_B);
+    }
+
+    // Assign flag colour — highest severity wins
+    float3 flag_color;
+    if (has_hard_clip)
+        flag_color = make_float3(1.0f, 0.0f, 0.0f);   // Red  — hard clip
+    else if (has_negative)
+        flag_color = make_float3(1.0f, 0.0f, 1.0f);   // Magenta — illegal negative
+    else if (has_superwhite)
+        flag_color = make_float3(0.0f, 1.0f, 1.0f);   // Cyan — approaching clip
+    else
+        flag_color = make_float3(1.0f, 1.0f, 0.0f);   // Yellow — sub-black pedestal
+
+    if (view_mode == ISOLATED)
+        return flag_color;
+
+    // Overlay: blend flag colour over original by opacity
+    float3 out;
+    out.x = p_R + (flag_color.x - p_R) * opacity;
+    out.y = p_G + (flag_color.y - p_G) * opacity;
+    out.z = p_B + (flag_color.z - p_B) * opacity;
+    return out;
+}

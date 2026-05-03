@@ -43,8 +43,13 @@ The [`dctl-toolkit/`](dctl-toolkit/) directory contains a collection of DCTL (Da
 | **Diagnostic** | `gamut_check` | Out-of-range pixel detection for wide gamut work |
 | | `chroma_noise_viz` | Shadow chroma noise visualization |
 | | `channel_isolation` | Per-channel greyscale view or R/G/B triptych |
+| | `signal_range_check` | Legal/full range issues, pedestal, super-white, hard clip detection |
+| | `output_qc` | Rec.709 delivery compliance — clip, negative, gamut, near-ceiling |
+| | `channel_overload` | Which R/G/B channel is clipping or negative, and by how much |
 | | `banding_viz` | Horizontal/vertical banding artifact detector (Resolve Studio) |
 | **Grading** | `luma_key` | Luma-windowed lift/gain correction with soft key edges |
+| **Visualization** (new) | `format_reference_strip` | Zone legend strip for all 8 formats — waveform calibration |
+| | `scope_zone_marker` | Tints zones for scope visibility; green = middle grey curve anchor |
 
 ### Quick Start
 

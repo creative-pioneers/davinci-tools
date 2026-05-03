@@ -35,6 +35,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `visualization/false_color_logc4.dctl` — false color tuned for ARRI LogC4 IRE values; middle grey zone centered at ~0.276 IRE (ALEXA 35 only)
 - `visualization/false_color_vlogl.dctl` — false color tuned for Panasonic V-Log L; middle grey zone centered at ~0.423 IRE
 - `visualization/color_temp_estimate.dctl` — per-pixel warm/cool colour temperature bias visualizer; shows spatial R/B imbalance distribution across the frame in tint overlay or 5-zone bias map modes
+- `diagnostic/signal_range_check.dctl` — detects legal vs full range issues, sub-black pedestal, approaching-clip super-whites, and hard clips; colour-coded per violation type
+- `diagnostic/output_qc.dctl` — Rec.709 delivery compliance checker; flags illegal clips, negatives, potential gamut violations, and near-white-ceiling pixels before export
+- `diagnostic/channel_overload.dctl` — shows which specific RGB channel is clipping or going negative and by how much; colour-coded by dominant channel (R/G/B/white for equal)
+- `visualization/format_reference_strip.dctl` — overlays a zone-coloured IRE reference strip on the frame edge for all 8 supported log formats; white tick marks at green zone boundaries; useful for waveform calibration and format identification
+- `visualization/scope_zone_marker.dctl` — tints tonal zones with scope-visible colours so they appear as labelled clusters on the waveform; green = middle grey lock point for curves, cyan/yellow = creative zones, amber = skin tones (hue-detected)
 
 ### Changed
 

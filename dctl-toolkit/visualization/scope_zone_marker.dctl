@@ -1,0 +1,118 @@
+// scope_zone_marker.dctl
+// ---------------------------------------------------------------------------
+// Purpose:   Tint tonal zones with scope-visible colours to identify curve
+//            anchor points on Resolve's waveform and parade scopes
+// Input:     Any signal — log or Rec.709 (set middle_grey_ire to match format)
+// Output:    Zone-tinted image; green cluster on waveform = middle grey lock point
+// Verified:  DaVinci Resolve 18.6
+// Note:      The bright green cluster on the waveform marks the exposure anchor —
+//            lock your curve here and work creatively above and below it.
+//            Skin tones appear as amber clusters (works best on Rec.709 input
+//            after a log transform; hue-angle based, disable on flat log signals).
+//
+//            Middle grey IRE presets by format:
+//              S-Log3   0.41  |  C-Log 3  0.39  |  LogC3   0.37
+//              V-Log L  0.42  |  S-Log2   0.36  |  LogC4   0.28
+//              BM Film5 0.30  |  Rec.709  0.42
+//
+// Zone tint colours (visible on waveform as coloured clusters):
+//   Blue   : Deep shadows — 2+ stops below grey  (creative: safe to lift)
+//   Cyan   : Shadows — 1-2 stops below grey      (transition zone)
+//   Green  : Middle grey +/- width               *** LOCK THIS on curves ***
+//   Yellow : Lower highlights — above grey zone  (creative zone)
+//   Orange : Upper highlights                    (creative: watch for clip)
+//   Red    : Near clip                           (warning zone)
+//   Amber  : Skin tones (hue-detected)           (protect carefully)
+// ---------------------------------------------------------------------------
+
+DEFINE_UI_PARAMS(middle_grey_ire, Middle Grey IRE, DCTLUI_SLIDER_FLOAT, 0.41f,  0.0f,   1.0f,  0.005f)
+DEFINE_UI_PARAMS(grey_zone_width, Grey Zone Width, DCTLUI_SLIDER_FLOAT, 0.04f,  0.005f, 0.15f, 0.005f)
+DEFINE_UI_PARAMS(blend_strength,  Blend Strength,  DCTLUI_SLIDER_FLOAT, 0.65f,  0.0f,   1.0f,  0.05f)
+DEFINE_UI_PARAMS(show_skin,       Skin Tones,      DCTLUI_COMBO_BOX, 1, {SKIN_OFF, SKIN_ON}, {Off, On})
+DEFINE_UI_PARAMS(show_mode,       Show Mode,       DCTLUI_COMBO_BOX, 0, {MODE_BLEND, MODE_ZONES}, {Blend, Zones Only})
+
+// Rec.709 luma weights
+const float LW_R = 0.2126f;
+const float LW_G = 0.7152f;
+const float LW_B = 0.0722f;
+
+// ---------------------------------------------------------------------------
+// RGB to HSV conversion (hue in degrees 0-360, sat 0-1, val 0-1)
+// ---------------------------------------------------------------------------
+__DEVICE__ float3 rgb_to_hsv(float r, float g, float b)
+{
+    float cmax  = _fmaxf(r, _fmaxf(g, b));
+    float cmin  = _fminf(r, _fminf(g, b));
+    float delta = cmax - cmin;
+
+    float h = 0.0f;
+    float s = 0.0f;
+    float v = cmax;
+
+    if (delta > 0.0001f)
+    {
+        s = delta / cmax;
+
+        if (cmax == r)
+        {
+            h = 60.0f * ((g - b) / delta);
+            if (h < 0.0f) h += 360.0f;
+        }
+        else if (cmax == g)
+        {
+            h = 60.0f * ((b - r) / delta + 2.0f);
+        }
+        else
+        {
+            h = 60.0f * ((r - g) / delta + 4.0f);
+        }
+    }
+
+    return make_float3(h, s, v);
+}
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                             float p_R, float p_G, float p_B)
+{
+    float luma = LW_R * p_R + LW_G * p_G + LW_B * p_B;
+
+    // Zone boundaries relative to middle grey
+    float lo          = middle_grey_ire - grey_zone_width;
+    float hi          = middle_grey_ire + grey_zone_width;
+    float shadow_split = lo * 0.5f;                    // deep shadow / shadow split
+    float hi_q1       = hi + (1.0f - hi) * 0.33f;     // lower highlight upper boundary
+    float hi_q2       = hi + (1.0f - hi) * 0.67f;     // upper highlight upper boundary
+
+    // Assign zone tint colour
+    float3 tint;
+    if      (luma >= lo && luma <= hi)  tint = make_float3(0.0f, 1.0f, 0.0f);   // GREEN  — lock point
+    else if (luma < shadow_split)       tint = make_float3(0.0f, 0.0f, 1.0f);   // BLUE   — deep shadow
+    else if (luma < lo)                 tint = make_float3(0.0f, 0.8f, 0.8f);   // CYAN   — shadow
+    else if (luma < hi_q1)              tint = make_float3(0.9f, 0.9f, 0.0f);   // YELLOW — low highlight
+    else if (luma < hi_q2)              tint = make_float3(1.0f, 0.5f, 0.0f);   // ORANGE — high highlight
+    else                                tint = make_float3(1.0f, 0.0f, 0.0f);   // RED    — near clip
+
+    // Skin tone override (hue-based; works best on Rec.709 output)
+    if (show_skin == SKIN_ON)
+    {
+        float3 hsv = rgb_to_hsv(p_R, p_G, p_B);
+        // Skin hue range: ~15-48 deg, moderate saturation, non-trivial value
+        if (hsv.x >= 15.0f && hsv.x <= 48.0f &&
+            hsv.y > 0.12f  && hsv.y < 0.70f  &&
+            hsv.z > 0.08f)
+        {
+            tint = make_float3(1.0f, 0.5f, 0.1f);   // AMBER — skin tones
+        }
+    }
+
+    // Zones Only mode — return pure tint
+    if (show_mode == MODE_ZONES)
+        return tint;
+
+    // Blend mode — lerp original toward tint by blend_strength
+    float3 out;
+    out.x = p_R + (tint.x - p_R) * blend_strength;
+    out.y = p_G + (tint.y - p_G) * blend_strength;
+    out.z = p_B + (tint.z - p_B) * blend_strength;
+    return out;
+}

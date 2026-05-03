@@ -43,6 +43,8 @@ The following tools work on any input signal regardless of camera system or log 
 - `channel_isolation` — per-channel greyscale or R/G/B triptych
 - `split_tone` — shadow/highlight hue shift with smooth crossover
 - `color_temp_estimate` — warm/cool R/B bias visualizer for mixed lighting detection
+- `format_reference_strip` — zone-coloured IRE legend strip for waveform calibration (all 8 formats)
+- `scope_zone_marker` — tints tonal zones for waveform visibility; green cluster = middle grey lock point
 
 ### Transforms
 
@@ -302,6 +304,28 @@ Visualizes per-pixel warm/cool colour temperature bias across the frame. Compute
 - **UI Params:** Target R-B Balance, Sensitivity, Min Luma, Show Mode (Tint Overlay / Bias Map)
 - **Input:** Any signal (works best on Rec.709 or display-referred signals placed after a log transform)
 
+#### `format_reference_strip.dctl`
+Overlays a narrow zone-coloured reference strip on the left or right edge of the frame. The strip maps IRE 0.0 (bottom) to 1.0 (top) using the selected format's zone colour scheme, with white tick marks at the green (middle grey) zone boundaries. The image passes through unchanged outside the strip. View on Resolve's waveform — your clip's luma trace will overlay the colour legend, instantly showing which zone each tonal region falls in.
+
+- **UI Params:** Format (C-Log 3 / S-Log3 / S-Log2 / LogC3 EI800 / LogC4 / BM Film Gen5 / V-Log L / Rec.709), Strip Width, Strip Side (Left / Right)
+- **Supported formats:** all 8 toolkit formats; Log3G10 omitted (middle grey at IRE ~0.95 compresses all zones unusably)
+
+#### `scope_zone_marker.dctl`
+Tints tonal zones with distinct colours so they appear as labelled clusters on Resolve's waveform and parade scopes. The bright green cluster marks middle grey — the curve anchor point. Adjust your curves and watch the green cluster: if it moves, you've shifted your exposure anchor.
+
+| Tint | Zone | Use |
+|------|------|-----|
+| Green | Middle grey ± width | **Lock this** on curves |
+| Cyan | Shadows | Creative zone |
+| Blue | Deep shadows | Creative zone |
+| Yellow | Lower highlights | Creative zone |
+| Orange | Upper highlights | Watch for clip |
+| Red | Near clip | Warning |
+| Amber | Skin tones (hue-detected) | Protect carefully |
+
+- **UI Params:** Middle Grey IRE (0.41 = S-Log3 default), Grey Zone Width, Blend Strength, Skin Tones (On/Off), Show Mode (Blend / Zones Only)
+- **Skin detection** works best on Rec.709 input (after a log-to-display transform)
+
 #### `split_tone.dctl`
 Applies independent hue and saturation shifts to shadows and highlights with a smooth crossover region. Place on a node after any log-to-display transform for predictable results.
 
@@ -330,6 +354,36 @@ View individual R, G, or B channels as greyscale, or display all three channels 
 
 - **UI Params:** Mode (Red / Green / Blue / Triptych R|G|B)
 - **Input:** Any color space
+
+#### `signal_range_check.dctl`
+Detects signal range issues per-channel. Place as the first node to catch legal vs full range confusion, sub-black pedestal, approaching-clip super-whites, and hard clips before any grading is applied.
+
+| Colour | Condition |
+|--------|-----------|
+| Red | Any channel > 1.0 (hard clipped) |
+| Magenta | Any channel < 0.0 (illegal negative) |
+| Cyan | Any channel > hi_thresh and ≤ 1.0 (approaching clip) |
+| Yellow | Luma in (0.0, 0.0627) — sub-black pedestal (possible legal/full range mismatch) |
+
+- **UI Params:** Highlight Warning threshold (default 0.9216 = 235/255), View Mode, Overlay Opacity
+
+#### `output_qc.dctl`
+Rec.709 delivery compliance checker. Place as the last node before export to flag anything that will fail in delivery.
+
+| Colour | Condition |
+|--------|-----------|
+| Red | Any channel > 1.0 (delivery blocker) |
+| Magenta | Any channel < 0.0 (delivery blocker) |
+| Yellow | Chroma ratio > sat_limit (potential gamut violation) |
+| Orange | Luma > luma_ceil (near white ceiling) |
+
+- **UI Params:** Saturation Limit (0.85), Luma Ceiling (0.95), View Mode, Overlay Opacity
+
+#### `channel_overload.dctl`
+Shows which specific RGB channel is responsible for clipping or negative values, and by how much. Complements `signal_range_check.dctl` with directional information.
+
+- **UI Params:** Clip Threshold (1.0), Sensitivity, View Mode
+- R/G/B tint = dominant overloaded channel; White = all channels equal; Dark variants = negative violations
 
 #### `banding_viz.dctl`
 Detects horizontal and vertical banding artifacts by measuring luma variance across a 5-pixel neighborhood in each direction. Pixels where variance exceeds the detection threshold are highlighted, making subtle codec or sensor banding visible before delivery. Requires DaVinci Resolve Studio (uses multi-pixel `__TEXTURE__` access).
@@ -380,6 +434,8 @@ dctl-toolkit/
 │   ├── false_color.dctl
 │   ├── exposure_grid.dctl
 │   ├── color_temp_estimate.dctl
+│   ├── format_reference_strip.dctl
+│   ├── scope_zone_marker.dctl
 │   ├── zebras.dctl
 │   ├── focus_peaking.dctl
 │   ├── skin_tone_indicator.dctl
@@ -388,6 +444,9 @@ dctl-toolkit/
 │   ├── gamut_check.dctl
 │   ├── chroma_noise_viz.dctl
 │   ├── channel_isolation.dctl
+│   ├── signal_range_check.dctl
+│   ├── output_qc.dctl
+│   ├── channel_overload.dctl
 │   └── banding_viz.dctl
 ├── grading/
 │   └── luma_key.dctl

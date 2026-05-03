@@ -1,0 +1,91 @@
+// channel_overload.dctl
+// ---------------------------------------------------------------------------
+// Purpose:   Identify which RGB channel is clipping or going negative, and by
+//            how much — directional overload map
+// Input:     Any signal
+// Output:    Channel-coloured overload tint
+// Verified:  DaVinci Resolve 18.6
+// Note:      Extends signal_range_check.dctl — where that tool shows THAT a
+//            problem exists, this shows WHICH channel is responsible. Useful
+//            for per-channel highlight recovery and negative suppression work.
+//
+// Colour key (high violations):
+//   Red    : R channel dominates (or has excess)
+//   Green  : G channel dominates
+//   Blue   : B channel dominates
+//   White  : All channels overloaded equally
+// Colour key (negative violations, darker):
+//   Dark red / green / blue : dominant negative channel
+// ---------------------------------------------------------------------------
+
+DEFINE_UI_PARAMS(hi_threshold, Clip Threshold, DCTLUI_SLIDER_FLOAT, 1.0f,  0.7f, 1.2f,  0.01f)
+DEFINE_UI_PARAMS(sensitivity,  Sensitivity,    DCTLUI_SLIDER_FLOAT, 3.0f,  1.0f, 10.0f, 0.5f)
+DEFINE_UI_PARAMS(view_mode,    View Mode,      DCTLUI_COMBO_BOX, 0, {OVERLAY, ISOLATED}, {Overlay, Isolated})
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                             float p_R, float p_G, float p_B)
+{
+    // High (clipping) excess per channel
+    float excess_r = _fmaxf(p_R - hi_threshold, 0.0f);
+    float excess_g = _fmaxf(p_G - hi_threshold, 0.0f);
+    float excess_b = _fmaxf(p_B - hi_threshold, 0.0f);
+
+    // Negative excess per channel
+    float neg_r = _fmaxf(-p_R, 0.0f);
+    float neg_g = _fmaxf(-p_G, 0.0f);
+    float neg_b = _fmaxf(-p_B, 0.0f);
+
+    float total_high = excess_r + excess_g + excess_b;
+    float total_neg  = neg_r + neg_g + neg_b;
+    float total_violation = total_high + total_neg;
+
+    // No violation — pass through or show black
+    if (total_violation < 0.001f)
+    {
+        if (view_mode == ISOLATED)
+            return make_float3(0.0f, 0.0f, 0.0f);
+        else
+            return make_float3(p_R, p_G, p_B);
+    }
+
+    float3 tint;
+
+    if (total_high >= total_neg)
+    {
+        // Highlight overload — determine dominant channel
+        float max_excess = _fmaxf(excess_r, _fmaxf(excess_g, excess_b));
+        float min_excess = _fminf(excess_r, _fminf(excess_g, excess_b));
+        int all_equal = (max_excess > 0.001f && (min_excess / max_excess) > 0.7f) ? 1 : 0;
+
+        if (all_equal)
+            tint = make_float3(1.0f, 1.0f, 1.0f);         // White — all channels clipping equally
+        else if (excess_r >= excess_g && excess_r >= excess_b)
+            tint = make_float3(1.0f, 0.0f, 0.0f);         // Red — R dominates
+        else if (excess_g >= excess_r && excess_g >= excess_b)
+            tint = make_float3(0.0f, 1.0f, 0.0f);         // Green — G dominates
+        else
+            tint = make_float3(0.0f, 0.0f, 1.0f);         // Blue — B dominates
+    }
+    else
+    {
+        // Negative violation — determine dominant channel
+        if (neg_r >= neg_g && neg_r >= neg_b)
+            tint = make_float3(0.7f, 0.0f, 0.0f);         // Dark red — R going negative
+        else if (neg_g >= neg_r && neg_g >= neg_b)
+            tint = make_float3(0.0f, 0.7f, 0.0f);         // Dark green — G going negative
+        else
+            tint = make_float3(0.0f, 0.0f, 0.7f);         // Dark blue — B going negative
+    }
+
+    float intensity = _fminf(total_violation * sensitivity, 1.0f);
+
+    if (view_mode == ISOLATED)
+        return make_float3(tint.x * intensity, tint.y * intensity, tint.z * intensity);
+
+    // Overlay: lerp original toward tint by intensity
+    float3 out;
+    out.x = p_R + (tint.x - p_R) * intensity;
+    out.y = p_G + (tint.y - p_G) * intensity;
+    out.z = p_B + (tint.z - p_B) * intensity;
+    return out;
+}

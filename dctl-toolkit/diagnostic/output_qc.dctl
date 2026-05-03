@@ -1,0 +1,76 @@
+// output_qc.dctl
+// ---------------------------------------------------------------------------
+// Purpose:   End-of-pipeline Rec.709 delivery compliance checker
+// Input:     Rec.709 gamma-encoded (place as last node before output)
+// Output:    Original with compliance violations highlighted
+// Verified:  DaVinci Resolve 18.6
+// Note:      Complements signal_range_check.dctl (input) and gamut_check.dctl
+//            (wide-gamut) — this focuses on Rec.709 delivery spec compliance.
+//            Checks are prioritised by severity; only the worst violation per
+//            pixel is shown.
+//
+// Check order (highest severity wins):
+//   Red     : Any channel > 1.0                    — illegal clip (delivery blocker)
+//   Magenta : Any channel < 0.0                    — illegal negative (delivery blocker)
+//   Yellow  : Chroma ratio > sat_limit AND bright  — potential gamut violation
+//   Orange  : Luma > luma_ceil                     — near white ceiling (caution)
+//   Pass    : All clear
+// ---------------------------------------------------------------------------
+
+DEFINE_UI_PARAMS(sat_limit, Saturation Limit, DCTLUI_SLIDER_FLOAT, 0.85f, 0.3f, 1.0f, 0.01f)
+DEFINE_UI_PARAMS(luma_ceil, Luma Ceiling,     DCTLUI_SLIDER_FLOAT, 0.95f, 0.7f, 1.0f, 0.01f)
+DEFINE_UI_PARAMS(view_mode, View Mode,        DCTLUI_COMBO_BOX, 0, {OVERLAY, ISOLATED}, {Overlay, Isolated})
+DEFINE_UI_PARAMS(opacity,   Overlay Opacity,  DCTLUI_SLIDER_FLOAT, 0.8f, 0.1f, 1.0f, 0.05f)
+
+// Rec.709 luma weights
+const float LW_R = 0.2126f;
+const float LW_G = 0.7152f;
+const float LW_B = 0.0722f;
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                             float p_R, float p_G, float p_B)
+{
+    float luma      = LW_R * p_R + LW_G * p_G + LW_B * p_B;
+    float max_ch    = _fmaxf(p_R, _fmaxf(p_G, p_B));
+    float min_ch    = _fminf(p_R, _fminf(p_G, p_B));
+    float chroma_ratio = (max_ch - min_ch) / _fmaxf(max_ch, 0.001f);
+
+    // Checks in descending severity order
+    int has_clip      = (p_R > 1.0f || p_G > 1.0f || p_B > 1.0f) ? 1 : 0;
+    int has_negative  = (p_R < 0.0f || p_G < 0.0f || p_B < 0.0f) ? 1 : 0;
+    int has_gamut     = (!has_clip && !has_negative &&
+                         chroma_ratio > sat_limit && max_ch > 0.2f) ? 1 : 0;
+    int has_near_ceil = (!has_clip && !has_negative && !has_gamut &&
+                         luma > luma_ceil) ? 1 : 0;
+
+    int flagged = (has_clip || has_negative || has_gamut || has_near_ceil) ? 1 : 0;
+
+    if (!flagged)
+    {
+        if (view_mode == ISOLATED)
+            return make_float3(0.0f, 0.0f, 0.0f);
+        else
+            return make_float3(p_R, p_G, p_B);
+    }
+
+    // Assign flag colour — highest severity wins
+    float3 flag_color;
+    if (has_clip)
+        flag_color = make_float3(1.0f, 0.0f, 0.0f);   // Red — illegal clip
+    else if (has_negative)
+        flag_color = make_float3(1.0f, 0.0f, 1.0f);   // Magenta — illegal negative
+    else if (has_gamut)
+        flag_color = make_float3(1.0f, 1.0f, 0.0f);   // Yellow — gamut violation
+    else
+        flag_color = make_float3(1.0f, 0.5f, 0.0f);   // Orange — near white ceiling
+
+    if (view_mode == ISOLATED)
+        return flag_color;
+
+    // Overlay: blend flag colour over original by opacity
+    float3 out;
+    out.x = p_R + (flag_color.x - p_R) * opacity;
+    out.y = p_G + (flag_color.y - p_G) * opacity;
+    out.z = p_B + (flag_color.z - p_B) * opacity;
+    return out;
+}
