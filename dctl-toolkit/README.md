@@ -1,6 +1,6 @@
 # DaVinci Resolve DCTL Toolkit
 
-Multi-format color grading tools for DaVinci Resolve 18+, implemented as DCTL (DaVinci Color Transform Language) per-pixel GPU effects. Supports Canon C-Log 3, Sony S-Log3, ARRI LogC3, and more. All tools operate per-pixel on the GPU and are applied as node effects in the Color page.
+Multi-format color grading tools for DaVinci Resolve 18+, implemented as DCTL (DaVinci Color Transform Language) per-pixel GPU effects. Supports Canon C-Log 2 / C-Log 3, Sony S-Log2 / S-Log3, ARRI LogC3 / LogC4, and more. All tools operate per-pixel on the GPU and are applied as node effects in the Color page.
 
 ## Installation
 
@@ -47,6 +47,19 @@ The following tools work on any input signal regardless of camera system or log 
 - `scope_zone_marker` — tints tonal zones for waveform visibility; green cluster = middle grey lock point
 
 ### Transforms
+
+#### `clog2_to_linear.dctl`
+Converts Canon C-Log 2 signal to scene-linear light. Single-segment log inverse — no piecewise linear toe. Black point sits at IRE ~0.035; covers ~15.5 stops of dynamic range (wider than C-Log 3). Sub-black values are clamped to 0.
+
+- **Input:** Canon C-Log 2 encoded
+- **Output:** Scene-linear (same gamut as input)
+- **Reference:** Canon Log 2 Transfer Characteristics white paper v202103
+
+#### `clog2_to_rec709.dctl`
+Full pipeline from Canon C-Log 2 / Cinema Gamut to Rec.709 display. Applies C-Log 2 linearization, Cinema Gamut to Rec.709 3x3 matrix, and Rec.709 OETF. The gamut matrix is identical to `clog3_to_rec709.dctl` — C-Log 2 and C-Log 3 both use Cinema Gamut primaries; only the transfer function differs.
+
+- **Input:** Canon C-Log 2, Cinema Gamut
+- **Output:** Rec.709 gamma-encoded
 
 #### `clog3_to_linear.dctl`
 Converts Canon C-Log 3 signal to scene-linear light. Implements the full piecewise inverse of the Canon C-Log 3 transfer function including the linear segment near zero. Use as a utility node before other processing that expects linear input.
@@ -151,6 +164,23 @@ Full pipeline from ARRI LogC4 / ARRI Wide Gamut 4 to Rec.709 display. Applies Lo
 - **Cameras:** ALEXA 35
 
 ### Visualization
+
+#### `false_color_clog2.dctl`
+False color exposure zone map with thresholds tuned for Canon C-Log 2 IRE encoding values. Black point at ~0.035 IRE; 18% grey at ~0.37 IRE; wider orange zone (0.75–0.90) reflects C-Log 2's extended highlight headroom versus C-Log 3.
+
+| Color | Zone | C-Log 2 IRE |
+|-------|------|-------------|
+| Purple | Crushed blacks | < 0.07 |
+| Blue | Deep shadows | 0.07 - 0.20 |
+| Teal | Shadow detail | 0.20 - 0.32 |
+| Green | Middle grey (18%) | 0.32 - 0.43 |
+| Grey | Upper midtones | 0.43 - 0.50 |
+| Pink | Skin tones | 0.50 - 0.58 |
+| Yellow | Highlights | 0.58 - 0.75 |
+| Orange | Hot highlights | 0.75 - 0.90 |
+| Red | Clipped | > 0.90 |
+
+- **UI Params:** Input Mode (C-Log 2 / Rec.709 toggle)
 
 #### `false_color_clog3.dctl`
 Maps luma to a false color exposure zone scheme tuned for C-Log 3 log values.
@@ -407,6 +437,8 @@ dctl-toolkit/
 ├── README.md
 ├── install.sh
 ├── transforms/
+│   ├── clog2_to_linear.dctl
+│   ├── clog2_to_rec709.dctl
 │   ├── clog3_to_linear.dctl
 │   ├── clog3_to_rec709.dctl
 │   ├── slog3_to_linear.dctl
@@ -424,6 +456,7 @@ dctl-toolkit/
 │   ├── logc4_to_linear.dctl
 │   └── logc4_to_rec709.dctl
 ├── visualization/
+│   ├── false_color_clog2.dctl
 │   ├── false_color_clog3.dctl
 │   ├── false_color_slog3.dctl
 │   ├── false_color_logc3.dctl
@@ -476,5 +509,5 @@ dctl-toolkit/
 ## References
 
 - Blackmagic DCTL documentation: bundled with Resolve at `<install>/Developer/DCTL/`
-- Canon Log 3 Transfer Characteristics white paper
+- Canon Log 2 / Log 3 Transfer Characteristics white paper
 - Canon Cinema Gamut primaries specification

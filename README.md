@@ -10,7 +10,9 @@ The [`dctl-toolkit/`](dctl-toolkit/) directory contains a collection of DCTL (Da
 
 | Category | Tool | Description |
 |----------|------|-------------|
-| **Transforms** | `clog3_to_linear` | Canon C-Log 3 to scene-linear |
+| **Transforms** | `clog2_to_linear` | Canon C-Log 2 to scene-linear |
+| | `clog2_to_rec709` | C-Log 2 / Cinema Gamut to Rec.709 display |
+| | `clog3_to_linear` | Canon C-Log 3 to scene-linear |
 | | `clog3_to_rec709` | C-Log 3 / Cinema Gamut to Rec.709 display |
 | | `slog3_to_linear` | Sony S-Log3 to scene-linear |
 | | `slog3_to_rec709` | S-Log3 / S-Gamut3.Cine to Rec.709 display |
@@ -26,7 +28,8 @@ The [`dctl-toolkit/`](dctl-toolkit/) directory contains a collection of DCTL (Da
 | | `log3g10_to_rec709` | Log3G10 / REDWideGamutRGB to Rec.709 display |
 | | `vlogl_to_linear` | Panasonic V-Log L to scene-linear |
 | | `vlogl_to_rec709` | V-Log L / V-Gamut to Rec.709 display |
-| **Visualization** | `false_color_clog3` | Exposure zone map tuned for C-Log 3 IRE values |
+| **Visualization** | `false_color_clog2` | Exposure zone map tuned for C-Log 2 IRE values |
+| | `false_color_clog3` | Exposure zone map tuned for C-Log 3 IRE values |
 | | `false_color_slog3` | Exposure zone map tuned for S-Log3 IRE values |
 | | `false_color_slog2` | Exposure zone map tuned for S-Log2 IRE values |
 | | `false_color_logc3` | Exposure zone map tuned for LogC3 IRE values |

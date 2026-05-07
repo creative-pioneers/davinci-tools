@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- `transforms/clog2_to_linear.dctl` — Canon C-Log 2 linearization; single-segment log formula (no piecewise linear toe), black point at IRE ~0.035, covers ~15.5 stops
+- `transforms/clog2_to_rec709.dctl` — full C-Log 2 / Cinema Gamut to Rec.709 display pipeline; uses same Cinema Gamut matrix as C-Log 3
+- `visualization/false_color_clog2.dctl` — false color tuned for C-Log 2; middle grey zone centered at ~0.37 IRE; wider highlight headroom than C-Log 3 reflects broader dynamic range
 - `transforms/bfilm5_to_linear.dctl` — Blackmagic Film Gen5 linearization for BMPCC 6K G2, URSA Mini Pro 12K, and compatible cameras; log2-based encoding
 - `transforms/bfilm5_to_rec709.dctl` — full Blackmagic Film Gen5 to Rec.709 display pipeline
 - `visualization/false_color_bfilm5.dctl` — false color tuned for Blackmagic Film Gen5; middle grey zone centered at ~0.298 IRE (lower than log10-based formats due to log2 encoding)
