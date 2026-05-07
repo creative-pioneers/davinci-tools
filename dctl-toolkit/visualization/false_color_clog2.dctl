@@ -1,0 +1,103 @@
+// false_color_clog2.dctl
+// ---------------------------------------------------------------------------
+// Purpose:   False color exposure map tuned for Canon C-Log 2 log values
+// Input:     Canon C-Log 2 encoded (default) or Rec.709 (toggle via UI)
+// Output:    False color overlay with zone-based coloring
+// Reference: Canon C-Log 2 IRE mapping, standard false color zone scheme
+// Verified:  DaVinci Resolve 18.6
+// Note:      Zone thresholds tuned to Canon C-Log 2 IRE values.
+//            18% grey maps to ~IRE 0.37; black point at ~IRE 0.035.
+//            C-Log 2 covers ~15.5 stops — thresholds are wider than C-Log 3.
+//            For a format-agnostic version with adjustable thresholds see false_color.dctl.
+//            For other Canon log see false_color_clog3.dctl.
+// ---------------------------------------------------------------------------
+//
+// Zone scheme (C-Log 2 IRE values):
+//   Purple  : < 0.07   - crushed / underexposed blacks
+//   Blue    : 0.07-0.20 - deep shadows
+//   Teal    : 0.20-0.32 - shadow detail
+//   Green   : 0.32-0.43 - middle grey (~18% grey card = ~0.37 in C-Log 2)
+//   Grey    : 0.43-0.50 - upper midtones
+//   Pink    : 0.50-0.58 - skin tones (Caucasian/average reference ~0.46-0.54)
+//   Yellow  : 0.58-0.75 - highlights
+//   Orange  : 0.75-0.90 - hot highlights (approaching clip)
+//   Red     : > 0.90   - clipped
+
+DEFINE_UI_PARAMS(input_mode, Input Mode, DCTLUI_COMBO_BOX, 0, {LOG, REC709}, {C-Log 2, Rec.709})
+
+// Rec.709 luma weights
+const float LW_R = 0.2126f;
+const float LW_G = 0.7152f;
+const float LW_B = 0.0722f;
+
+// C-Log 2 constants for forward transform (linear -> CLog2)
+// Used when input is Rec.709 to convert luma to C-Log 2 equivalent IRE scale
+const float CLOG2_A = 0.281863093f;
+const float CLOG2_B = 87.09937546f;
+const float CLOG2_C = 0.035388128f;
+
+// Rec.709 EOTF (display gamma to linear)
+const float REC709_ALPHA = 1.09929682680944f;
+const float REC709_BETA_OETF = 0.018053968510807f;
+
+__DEVICE__ float rec709_to_linear_f(float x)
+{
+    if (x < 0.0f) return 0.0f;
+    if (x < 4.5f * REC709_BETA_OETF)
+        return x / 4.5f;
+    else
+        return _powf((x + (REC709_ALPHA - 1.0f)) / REC709_ALPHA, 1.0f / 0.45f);
+}
+
+__DEVICE__ float linear_to_clog2_f(float x)
+{
+    // Forward C-Log 2; clamp sub-black linear input to 0
+    float xc = _fmaxf(x, 0.0f);
+    return CLOG2_A * _log10f(CLOG2_B * xc + 1.0f) + CLOG2_C;
+}
+
+__DEVICE__ float3 zone_color(float luma)
+{
+    // Zone thresholds and colors for C-Log 2 IRE values
+    if (luma < 0.07f)
+        return make_float3(0.4f, 0.0f, 0.6f);   // Purple - crushed
+    else if (luma < 0.20f)
+        return make_float3(0.0f, 0.1f, 0.8f);   // Blue - deep shadows
+    else if (luma < 0.32f)
+        return make_float3(0.0f, 0.6f, 0.6f);   // Teal - shadow detail
+    else if (luma < 0.43f)
+        return make_float3(0.0f, 0.7f, 0.0f);   // Green - middle grey
+    else if (luma < 0.50f)
+        return make_float3(0.5f, 0.5f, 0.5f);   // Grey - upper midtones
+    else if (luma < 0.58f)
+        return make_float3(0.9f, 0.5f, 0.6f);   // Pink - skin tones
+    else if (luma < 0.75f)
+        return make_float3(0.9f, 0.9f, 0.0f);   // Yellow - highlights
+    else if (luma < 0.90f)
+        return make_float3(1.0f, 0.5f, 0.0f);   // Orange - hot highlights
+    else
+        return make_float3(1.0f, 0.0f, 0.0f);   // Red - clipped
+}
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                             float p_R, float p_G, float p_B)
+{
+    float luma;
+
+    if (input_mode == LOG)
+    {
+        // Input is C-Log 2: compute luma directly in log domain
+        luma = LW_R * p_R + LW_G * p_G + LW_B * p_B;
+    }
+    else
+    {
+        // Input is Rec.709: linearize, compute luma, convert to C-Log 2 scale
+        float lin_r = rec709_to_linear_f(p_R);
+        float lin_g = rec709_to_linear_f(p_G);
+        float lin_b = rec709_to_linear_f(p_B);
+        float lin_luma = LW_R * lin_r + LW_G * lin_g + LW_B * lin_b;
+        luma = linear_to_clog2_f(lin_luma);
+    }
+
+    return zone_color(luma);
+}

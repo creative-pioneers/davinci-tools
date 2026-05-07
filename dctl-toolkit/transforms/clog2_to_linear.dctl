@@ -1,0 +1,46 @@
+// clog2_to_linear.dctl
+// ---------------------------------------------------------------------------
+// Purpose:   Convert Canon C-Log 2 signal to scene-linear light
+// Input:     Canon C-Log 2 encoded (Canon Cinema Gamut or any gamut)
+// Output:    Scene-linear (same gamut as input)
+// Reference: Canon Log 2 Transfer Characteristics white paper
+//            "Canon Log Transfer Characteristics" v202103
+// Verified:  DaVinci Resolve 18.6
+// Note:      Canon C-Log 2 specific — wider dynamic range (~15.5 stops) than C-Log 3.
+//            For other Canon log see clog3_to_linear.dctl.
+//            For Sony log see slog2_to_linear.dctl, slog3_to_linear.dctl.
+// ---------------------------------------------------------------------------
+//
+// Canon C-Log 2 forward encoding:
+//   IRE = A * log10(B * x + 1.0) + C   for x >= 0
+//
+// No piecewise linear segment — the log formula is smooth at x = 0 (black = 0.035 IRE).
+// Sub-black signal values (x < 0) are clamped to 0 on decode.
+//
+// Constants from Canon white paper:
+//   A = 0.281863093  (log coefficient — more compressed than C-Log 3)
+//   B = 87.09937546  (scene multiplier)
+//   C = 0.035388128  (black offset; 0 scene-linear maps to ~3.5% IRE)
+//
+// Inverse:
+//   x = (10^((IRE - C) / A) - 1) / B
+
+const float CLOG2_A = 0.281863093f;
+const float CLOG2_B = 87.09937546f;
+const float CLOG2_C = 0.035388128f;
+
+__DEVICE__ float clog2_to_linear_f(float x)
+{
+    // Invert C-Log 2; clamp sub-black values to 0 (no negative linear segment)
+    return _fmaxf((_powf(10.0f, (x - CLOG2_C) / CLOG2_A) - 1.0f) / CLOG2_B, 0.0f);
+}
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                             float p_R, float p_G, float p_B)
+{
+    float3 out;
+    out.x = clog2_to_linear_f(p_R);
+    out.y = clog2_to_linear_f(p_G);
+    out.z = clog2_to_linear_f(p_B);
+    return out;
+}

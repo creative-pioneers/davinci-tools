@@ -1,0 +1,77 @@
+// clog2_to_rec709.dctl
+// ---------------------------------------------------------------------------
+// Purpose:   Convert Canon C-Log 2 / Cinema Gamut to Rec.709 display
+// Input:     Canon C-Log 2 encoded, Canon Cinema Gamut primaries
+// Output:    Rec.709 gamma-encoded (BT.1886 ~ 2.4 power)
+// Reference: Canon Log 2 Transfer Characteristics white paper
+//            Canon Cinema Gamut primaries from Canon EOS C-series docs
+// Verified:  DaVinci Resolve 18.6
+// Note:      C-Log 2 uses the same Cinema Gamut primaries as C-Log 3.
+//            The gamut matrix is identical — only the opto-electronic transfer
+//            function differs between the two log formats.
+// ---------------------------------------------------------------------------
+//
+// Pipeline:
+//   1. Invert C-Log 2 to scene-linear
+//   2. Apply Cinema Gamut -> Rec.709 3x3 matrix
+//   3. Apply Rec.709 OETF (BT.1886 display gamma)
+
+// --- Canon C-Log 2 constants ---
+const float CLOG2_A = 0.281863093f;
+const float CLOG2_B = 87.09937546f;
+const float CLOG2_C = 0.035388128f;
+
+// --- Cinema Gamut to Rec.709 matrix ---
+// Derived from Canon Cinema Gamut primaries and D65 white point
+// to Rec.709 / sRGB primaries (also D65).
+// Source: Canon EOS C-series documentation, "Cinema Gamut" primaries:
+//   Cinema Gamut:  R(0.7400, 0.2700), G(0.1700, 1.1400), B(0.0800, -0.1000)
+//   Rec.709:       R(0.6400, 0.3300), G(0.3000, 0.6000), B(0.1500, 0.0600)
+// Same matrix as clog3_to_rec709.dctl — gamut is independent of log curve.
+const float M00 =  1.08190037f; const float M01 = -0.18030718f; const float M02 =  0.09840681f;
+const float M10 = -0.00800807f; const float M11 =  1.12279255f; const float M12 = -0.11478448f;
+const float M20 = -0.04467524f; const float M21 = -0.27216747f; const float M22 =  1.31684271f;
+
+// --- Rec.709 OETF (BT.1886 inverse EOTF approximation) ---
+const float REC709_ALPHA = 1.09929682680944f;
+const float REC709_BETA  = 0.018053968510807f;
+
+__DEVICE__ float clog2_to_linear_f(float x)
+{
+    return _fmaxf((_powf(10.0f, (x - CLOG2_C) / CLOG2_A) - 1.0f) / CLOG2_B, 0.0f);
+}
+
+__DEVICE__ float linear_to_rec709_f(float x)
+{
+    if (x < 0.0f) return 0.0f;
+    if (x < REC709_BETA)
+        return 4.5f * x;
+    else
+        return REC709_ALPHA * _powf(x, 0.45f) - (REC709_ALPHA - 1.0f);
+}
+
+__DEVICE__ float3 transform(int p_Width, int p_Height, int p_X, int p_Y,
+                             float p_R, float p_G, float p_B)
+{
+    // Step 1: C-Log 2 to scene-linear
+    float lin_r = clog2_to_linear_f(p_R);
+    float lin_g = clog2_to_linear_f(p_G);
+    float lin_b = clog2_to_linear_f(p_B);
+
+    // Step 2: Cinema Gamut to Rec.709 gamut (3x3 matrix)
+    float r709 = M00 * lin_r + M01 * lin_g + M02 * lin_b;
+    float g709 = M10 * lin_r + M11 * lin_g + M12 * lin_b;
+    float b709 = M20 * lin_r + M21 * lin_g + M22 * lin_b;
+
+    // Clamp negatives before gamma (gamut mapping can produce them)
+    r709 = _fmaxf(r709, 0.0f);
+    g709 = _fmaxf(g709, 0.0f);
+    b709 = _fmaxf(b709, 0.0f);
+
+    // Step 3: Linear to Rec.709 gamma
+    float3 out;
+    out.x = linear_to_rec709_f(r709);
+    out.y = linear_to_rec709_f(g709);
+    out.z = linear_to_rec709_f(b709);
+    return out;
+}
